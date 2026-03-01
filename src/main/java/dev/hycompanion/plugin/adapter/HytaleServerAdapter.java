@@ -52,14 +52,19 @@ import dev.hycompanion.plugin.api.GamePlayer;
 import dev.hycompanion.plugin.api.HytaleAPI;
 import dev.hycompanion.plugin.api.Location;
 import dev.hycompanion.plugin.api.inventory.*;
+import dev.hycompanion.plugin.api.results.ContainerActionResult;
+import dev.hycompanion.plugin.api.results.ContainerInventoryResult;
 import dev.hycompanion.plugin.core.npc.NpcData;
 import dev.hycompanion.plugin.core.npc.NpcInstanceData;
 import dev.hycompanion.plugin.core.npc.NpcMoveResult;
+import dev.hycompanion.plugin.integration.PluginIntegrationManager;
+import dev.hycompanion.plugin.integration.SpeechBubbleIntegration;
 import dev.hycompanion.plugin.network.PacketDispatchUtil;
 import dev.hycompanion.plugin.shutdown.ShutdownManager;
 import dev.hycompanion.plugin.utils.PluginLogger;
 import java.lang.reflect.Field;
 import java.time.Instant;
+import javax.annotation.Nonnull;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
@@ -131,10 +136,16 @@ public class HytaleServerAdapter implements HytaleAPI {
 
     private java.util.function.Consumer<UUID> removalListener;
 
+    // Plugin integrations (optional dependencies)
+    private final PluginIntegrationManager integrationManager;
+
     public HytaleServerAdapter(PluginLogger logger, HycompanionEntrypoint plugin, ShutdownManager shutdownManager) {
         this.logger = logger;
         this.plugin = plugin;
         this.shutdownManager = shutdownManager;
+
+        // Initialize plugin integrations (optional dependencies)
+        this.integrationManager = new PluginIntegrationManager(logger);
 
         // Register with shutdown manager for automatic cleanup
         shutdownManager.register(this::cleanup);
@@ -263,7 +274,7 @@ public class HytaleServerAdapter implements HytaleAPI {
     }
 
     @Override
-    public void sendNpcMessage(UUID npcInstanceId, String playerId, String message) {
+    public void sendNpcMessage(UUID npcInstanceId, String playerId, String message, String rawMessage) {
         // Try to get the player's world first
         World world = null;
         try {
@@ -299,6 +310,9 @@ public class HytaleServerAdapter implements HytaleAPI {
                     Message hytaleMessage = Message.raw(message).color("#22C55E");
                     playerRef.sendMessage(hytaleMessage);
                     logger.debug("NPC [" + npcInstanceId + "] says to player [" + playerId + "]: " + message);
+
+                    // Also show speech bubble if the plugin is available
+                    showSpeechBubble(npcInstanceId, uuid, rawMessage);
                 } else {
                     logger.warn("Player not found for NPC message: " + playerId);
                 }
@@ -309,8 +323,36 @@ public class HytaleServerAdapter implements HytaleAPI {
         });
     }
 
+    /**
+     * Show a speech bubble above an NPC if the Speech Bubbles plugin is available.
+     * This is an optional feature - if the plugin is not installed, this method
+     * does nothing.
+     * 
+     * @param npcInstanceId The NPC instance UUID
+     * @param playerUuid    The player UUID who should see the bubble
+     * @param message       The message to display
+     */
+    private void showSpeechBubble(UUID npcInstanceId, UUID playerUuid, String message) {
+        try {
+            SpeechBubbleIntegration bubbles = integrationManager.getSpeechBubbles();
+            if (!bubbles.isAvailable()) {
+                return;
+            }
+
+            // Truncate long messages for the bubble
+            String bubbleText = bubbles.truncateText(message, 150);
+
+            // Show bubble for 6 seconds (longer than default to allow reading)
+            bubbles.showBubble(npcInstanceId, playerUuid, bubbleText, 6000);
+
+        } catch (Exception e) {
+            // Speech bubbles are optional - log debug only
+            logger.debug("Could not show speech bubble: " + e.getMessage());
+        }
+    }
+
     @Override
-    public void broadcastNpcMessage(UUID npcInstanceId, List<String> playerIds, String message) {
+    public void broadcastNpcMessage(UUID npcInstanceId, List<String> playerIds, String message, String rawMessage) {
         if (playerIds == null || playerIds.isEmpty()) {
             logger.debug("No players to broadcast NPC message to");
             return;
@@ -337,6 +379,7 @@ public class HytaleServerAdapter implements HytaleAPI {
 
                     if (playerRef != null) {
                         playerRef.sendMessage(hytaleMessage);
+                        showSpeechBubble(npcInstanceId, uuid, rawMessage);
                         sent++;
                     }
                 } catch (IllegalArgumentException e) {
@@ -1615,7 +1658,8 @@ public class HytaleServerAdapter implements HytaleAPI {
     }
 
     @Override
-    public CompletableFuture<Optional<Map<String, Object>>> scanBlocks(UUID npcInstanceId, int radius) {
+    public CompletableFuture<Optional<Map<String, Object>>> scanBlocks(UUID npcInstanceId, int radius,
+            boolean containersOnly) {
         CompletableFuture<Optional<Map<String, Object>>> future = new CompletableFuture<>();
 
         NpcInstanceData npcData = npcInstanceEntities.get(npcInstanceId);
@@ -1738,6 +1782,14 @@ public class HytaleServerAdapter implements HytaleAPI {
                         String blockId = blockType.getId();
                         if (blockId == null || blockId.isEmpty()) {
                             continue;
+                        }
+
+                        if (containersOnly) {
+                            com.hypixel.hytale.server.core.universe.world.meta.BlockState state = chunk.getState(x, y,
+                                    z);
+                            if (!(state instanceof com.hypixel.hytale.server.core.universe.world.meta.state.ItemContainerBlockState)) {
+                                continue;
+                            }
                         }
 
                         // Update or create block scan info
@@ -4930,11 +4982,57 @@ public class HytaleServerAdapter implements HytaleAPI {
                 spawnLocCount + " spawn locations, " + pendingRespawnCount + " pending respawns in " +
                 (System.currentTimeMillis() - stepStart) + "ms");
 
+        // Shutdown plugin integrations
+        stepStart = System.currentTimeMillis();
+        if (integrationManager != null) {
+            integrationManager.shutdown();
+        }
+        logger.info("[Hycompanion] Plugin integrations shut down in " +
+                (System.currentTimeMillis() - stepStart) + "ms");
+
         long totalTime = System.currentTimeMillis() - startTime;
         logger.info("[Hycompanion] ============================================");
         logger.info("[Hycompanion] CLEANUP COMPLETE");
         logger.info("[Hycompanion] Total time: " + totalTime + "ms");
         logger.info("[Hycompanion] ============================================");
+    }
+
+    // ========== Plugin Integrations ==========
+
+    /**
+     * Get the plugin integration manager.
+     * This provides access to optional plugin integrations like Speech Bubbles.
+     * 
+     * @return The PluginIntegrationManager instance
+     */
+    @Nonnull
+    public PluginIntegrationManager getIntegrationManager() {
+        return integrationManager;
+    }
+
+    /**
+     * Show a "thinking" speech bubble above an NPC.
+     * This is displayed while the NPC is processing/generating a response.
+     * 
+     * @param npcInstanceId The NPC instance UUID
+     * @param playerUuid    The player who should see the bubble
+     */
+    public void showThinkingBubble(UUID npcInstanceId, UUID playerUuid) {
+        try {
+            SpeechBubbleIntegration bubbles = integrationManager.getSpeechBubbles();
+            if (!bubbles.isAvailable()) {
+                return;
+            }
+
+            String[] thinkingTexts = { "Hmm...", "Let me think...", "One moment...", "Processing..." };
+            String thinking = thinkingTexts[(int) (Math.random() * thinkingTexts.length)];
+
+            // Show for 10 seconds - will be replaced when response arrives
+            bubbles.showBubble(npcInstanceId, playerUuid, thinking, 10000);
+
+        } catch (Exception e) {
+            logger.debug("Could not show thinking bubble: " + e.getMessage());
+        }
     }
 
     // ========== Block Discovery ==========
@@ -6547,5 +6645,403 @@ public class HytaleServerAdapter implements HytaleAPI {
             return false;
         }
     }
+    // ========== Container Operations ==========
 
+    @Override
+    public CompletableFuture<Optional<ContainerInventoryResult>> getContainerInventory(UUID npcInstanceId, int x, int y,
+            int z) {
+        CompletableFuture<Optional<ContainerInventoryResult>> future = new CompletableFuture<>();
+
+        NpcInstanceData npcData = npcInstanceEntities.get(npcInstanceId);
+        if (npcData == null) {
+            future.complete(Optional.of(ContainerInventoryResult.failure("NPC not found or offline")));
+            return future;
+        }
+
+        Ref<EntityStore> ref = npcData.entityRef();
+        if (ref == null || !ref.isValid()) {
+            future.complete(Optional.of(ContainerInventoryResult.failure("Invalid entity reference")));
+            return future;
+        }
+
+        World world = ref.getStore().getExternalData().getWorld();
+        if (world == null) {
+            future.complete(Optional.of(ContainerInventoryResult.failure("World not found")));
+            return future;
+        }
+
+        world.execute(() -> {
+            try {
+                // Distance check
+                TransformComponent transform = ref.getStore().getComponent(ref, TransformComponent.getComponentType());
+                if (transform == null) {
+                    future.complete(Optional.of(ContainerInventoryResult.failure("Missing transform component")));
+                    return;
+                }
+                Vector3d npcPos = transform.getPosition();
+                double dist = Math.sqrt(Math.pow(npcPos.getX() - (x + 0.5), 2) + Math.pow(npcPos.getY() - (y + 0.5), 2)
+                        + Math.pow(npcPos.getZ() - (z + 0.5), 2));
+                if (dist > 5.0) {
+                    future.complete(
+                            Optional.of(ContainerInventoryResult.failure("Too far from container (limit 5 blocks)")));
+                    return;
+                }
+
+                var chunk = world.getChunkIfLoaded(com.hypixel.hytale.math.util.ChunkUtil.indexChunkFromBlock(x, z));
+                if (chunk == null) {
+                    future.complete(Optional.of(ContainerInventoryResult.failure("Container chunk is not loaded")));
+                    return;
+                }
+
+                var state = chunk.getState(x, y, z);
+                if (state instanceof com.hypixel.hytale.server.core.universe.world.meta.state.ItemContainerBlockState containerState) {
+                    var container = containerState.getItemContainer();
+                    if (container == null) {
+                        future.complete(
+                                Optional.of(ContainerInventoryResult.failure("Container is locked or invalid")));
+                        return;
+                    }
+
+                    List<Map<String, Object>> items = new ArrayList<>();
+                    for (short i = 0; i < container.getCapacity(); i++) {
+                        var stack = container.getItemStack(i);
+                        if (stack != null && !stack.isEmpty()) {
+                            Map<String, Object> itemMap = new HashMap<>();
+                            itemMap.put("slot", i);
+                            itemMap.put("itemId", stack.getItem().getId());
+                            itemMap.put("quantity", stack.getQuantity());
+                            items.add(itemMap);
+                        }
+                    }
+
+                    future.complete(Optional.of(ContainerInventoryResult.success(items)));
+                } else {
+                    future.complete(Optional.of(ContainerInventoryResult.failure("Block is not a container")));
+                }
+            } catch (Exception e) {
+                logger.error("[Hycompanion] Error getting container inventory: " + e.getMessage());
+                Sentry.captureException(e);
+                future.complete(Optional.of(ContainerInventoryResult.failure("Internal error: " + e.getMessage())));
+            }
+        });
+
+        return future;
+    }
+
+    @Override
+    public CompletableFuture<Optional<ContainerActionResult>> storeItemInContainer(UUID npcInstanceId, int x, int y,
+            int z, String itemId, int quantity) {
+        CompletableFuture<Optional<ContainerActionResult>> future = new CompletableFuture<>();
+
+        NpcInstanceData npcData = npcInstanceEntities.get(npcInstanceId);
+        if (npcData == null) {
+            future.complete(Optional.of(ContainerActionResult.failure("NPC not found or offline")));
+            return future;
+        }
+
+        Ref<EntityStore> ref = npcData.entityRef();
+        if (ref == null || !ref.isValid()) {
+            future.complete(Optional.of(ContainerActionResult.failure("Invalid entity reference")));
+            return future;
+        }
+
+        World world = ref.getStore().getExternalData().getWorld();
+        if (world == null) {
+            future.complete(Optional.of(ContainerActionResult.failure("World not found")));
+            return future;
+        }
+
+        world.execute(() -> {
+            try {
+                // Distance check
+                TransformComponent transform = ref.getStore().getComponent(ref, TransformComponent.getComponentType());
+                if (transform == null) {
+                    future.complete(Optional.of(ContainerActionResult.failure("Missing transform component")));
+                    return;
+                }
+                Vector3d npcPos = transform.getPosition();
+                double dist = Math.sqrt(Math.pow(npcPos.getX() - (x + 0.5), 2) + Math.pow(npcPos.getY() - (y + 0.5), 2)
+                        + Math.pow(npcPos.getZ() - (z + 0.5), 2));
+                if (dist > 5.0) {
+                    future.complete(
+                            Optional.of(ContainerActionResult.failure("Too far from container (limit 5 blocks)")));
+                    return;
+                }
+
+                var chunk = world.getChunkIfLoaded(com.hypixel.hytale.math.util.ChunkUtil.indexChunkFromBlock(x, z));
+                if (chunk == null) {
+                    future.complete(Optional.of(ContainerActionResult.failure("Container chunk is not loaded")));
+                    return;
+                }
+
+                var state = chunk.getState(x, y, z);
+                if (!(state instanceof com.hypixel.hytale.server.core.universe.world.meta.state.ItemContainerBlockState containerState)) {
+                    future.complete(Optional.of(ContainerActionResult.failure("Block is not a container")));
+                    return;
+                }
+
+                var container = containerState.getItemContainer();
+                if (container == null) {
+                    future.complete(Optional.of(ContainerActionResult.failure("Container is locked or invalid")));
+                    return;
+                }
+
+                NPCEntity npcEntity = ref.getStore().getComponent(ref, NPCEntity.getComponentType());
+                Inventory inventory = npcEntity.getInventory();
+                if (inventory == null) {
+                    future.complete(Optional.of(ContainerActionResult.failure("NPC has no inventory")));
+                    return;
+                }
+
+                int remainingToStore = quantity;
+                int amountStored = 0;
+
+                for (ItemContainer invContainer : new ItemContainer[] { inventory.getHotbar(),
+                        inventory.getStorage() }) {
+                    for (short i = 0; i < invContainer.getCapacity(); i++) {
+                        if (remainingToStore <= 0)
+                            break;
+
+                        var stack = invContainer.getItemStack(i);
+                        if (stack != null && !stack.isEmpty() && stack.getItem().getId().equals(itemId)) {
+                            int available = stack.getQuantity();
+                            int toStore = Math.min(available, remainingToStore);
+
+                            var stackToStore = new com.hypixel.hytale.server.core.inventory.ItemStack(itemId, toStore);
+
+                            boolean added = false;
+                            for (short j = 0; j < container.getCapacity(); j++) {
+                                var destStack = container.getItemStack(j);
+                                if (destStack == null || destStack.isEmpty()) {
+                                    container.setItemStackForSlot(j, stackToStore);
+                                    added = true;
+                                    break;
+                                } else if (destStack.getItem().getId().equals(itemId)) {
+                                    int space = destStack.getItem().getMaxStack() - destStack.getQuantity();
+                                    if (space > 0) {
+                                        int taking = Math.min(space, toStore);
+                                        container.setItemStackForSlot(j,
+                                                new com.hypixel.hytale.server.core.inventory.ItemStack(itemId,
+                                                        destStack.getQuantity() + taking));
+
+                                        toStore -= taking;
+                                        amountStored += taking;
+                                        remainingToStore -= taking;
+
+                                        int newInvQty = available - taking;
+                                        if (newInvQty <= 0) {
+                                            invContainer.setItemStackForSlot(i, null);
+                                        } else {
+                                            invContainer.setItemStackForSlot(i,
+                                                    new com.hypixel.hytale.server.core.inventory.ItemStack(itemId,
+                                                            newInvQty));
+                                        }
+
+                                        available = newInvQty;
+
+                                        if (toStore <= 0) {
+                                            added = true;
+                                            break;
+                                        } else {
+                                            stackToStore = new com.hypixel.hytale.server.core.inventory.ItemStack(
+                                                    itemId, toStore);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (added && toStore > 0) {
+                                amountStored += toStore;
+                                remainingToStore -= toStore;
+
+                                int newInvQty = available - toStore;
+                                if (newInvQty <= 0) {
+                                    invContainer.setItemStackForSlot(i, null);
+                                } else {
+                                    invContainer.setItemStackForSlot(i,
+                                            new com.hypixel.hytale.server.core.inventory.ItemStack(itemId, newInvQty));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (amountStored == 0) {
+                    future.complete(Optional
+                            .of(ContainerActionResult.failure("Item not found in inventory or container full")));
+                } else if (amountStored < quantity) {
+                    future.complete(Optional.of(ContainerActionResult
+                            .partialSuccess("Container full or not enough items. Stored " + amountStored)));
+                } else {
+                    future.complete(Optional.of(ContainerActionResult.success()));
+                }
+            } catch (Exception e) {
+                logger.error("[Hycompanion] Error storing item in container: " + e.getMessage());
+                Sentry.captureException(e);
+                future.complete(Optional.of(ContainerActionResult.failure("Internal error: " + e.getMessage())));
+            }
+        });
+
+        return future;
+    }
+
+    @Override
+    public CompletableFuture<Optional<ContainerActionResult>> takeItemFromContainer(UUID npcInstanceId, int x, int y,
+            int z, String itemId, int quantity) {
+        CompletableFuture<Optional<ContainerActionResult>> future = new CompletableFuture<>();
+
+        NpcInstanceData npcData = npcInstanceEntities.get(npcInstanceId);
+        if (npcData == null) {
+            future.complete(Optional.of(ContainerActionResult.failure("NPC not found or offline")));
+            return future;
+        }
+
+        Ref<EntityStore> ref = npcData.entityRef();
+        if (ref == null || !ref.isValid()) {
+            future.complete(Optional.of(ContainerActionResult.failure("Invalid entity reference")));
+            return future;
+        }
+
+        World world = ref.getStore().getExternalData().getWorld();
+        if (world == null) {
+            future.complete(Optional.of(ContainerActionResult.failure("World not found")));
+            return future;
+        }
+
+        world.execute(() -> {
+            try {
+                // Distance check
+                TransformComponent transform = ref.getStore().getComponent(ref, TransformComponent.getComponentType());
+                if (transform == null) {
+                    future.complete(Optional.of(ContainerActionResult.failure("Missing transform component")));
+                    return;
+                }
+                Vector3d npcPos = transform.getPosition();
+                double dist = Math.sqrt(Math.pow(npcPos.getX() - (x + 0.5), 2) + Math.pow(npcPos.getY() - (y + 0.5), 2)
+                        + Math.pow(npcPos.getZ() - (z + 0.5), 2));
+                if (dist > 5.0) {
+                    future.complete(
+                            Optional.of(ContainerActionResult.failure("Too far from container (limit 5 blocks)")));
+                    return;
+                }
+
+                var chunk = world.getChunkIfLoaded(com.hypixel.hytale.math.util.ChunkUtil.indexChunkFromBlock(x, z));
+                if (chunk == null) {
+                    future.complete(Optional.of(ContainerActionResult.failure("Container chunk is not loaded")));
+                    return;
+                }
+
+                var state = chunk.getState(x, y, z);
+                if (!(state instanceof com.hypixel.hytale.server.core.universe.world.meta.state.ItemContainerBlockState containerState)) {
+                    future.complete(Optional.of(ContainerActionResult.failure("Block is not a container")));
+                    return;
+                }
+
+                var container = containerState.getItemContainer();
+                if (container == null) {
+                    future.complete(Optional.of(ContainerActionResult.failure("Container is locked or invalid")));
+                    return;
+                }
+
+                NPCEntity npcEntity = ref.getStore().getComponent(ref, NPCEntity.getComponentType());
+                Inventory inventory = npcEntity.getInventory();
+                if (inventory == null) {
+                    future.complete(Optional.of(ContainerActionResult.failure("NPC has no inventory")));
+                    return;
+                }
+
+                int remainingToTake = quantity;
+                int amountTaken = 0;
+
+                for (short i = 0; i < container.getCapacity(); i++) {
+                    if (remainingToTake <= 0)
+                        break;
+
+                    var stack = container.getItemStack(i);
+                    if (stack != null && !stack.isEmpty() && stack.getItem().getId().equals(itemId)) {
+                        int available = stack.getQuantity();
+                        int toTake = Math.min(available, remainingToTake);
+
+                        var stackToTake = new com.hypixel.hytale.server.core.inventory.ItemStack(itemId, toTake);
+
+                        // Try to add to inventory
+                        boolean added = false;
+                        for (ItemContainer invContainer : new ItemContainer[] { inventory.getHotbar(),
+                                inventory.getStorage() }) {
+                            for (short j = 0; j < invContainer.getCapacity(); j++) {
+                                var destStack = invContainer.getItemStack(j);
+                                if (destStack == null || destStack.isEmpty()) {
+                                    invContainer.setItemStackForSlot(j, stackToTake);
+                                    added = true;
+                                    break;
+                                } else if (destStack.getItem().getId().equals(itemId)) {
+                                    int space = destStack.getItem().getMaxStack() - destStack.getQuantity();
+                                    if (space > 0) {
+                                        int taking = Math.min(space, toTake);
+                                        invContainer.setItemStackForSlot(j,
+                                                new com.hypixel.hytale.server.core.inventory.ItemStack(itemId,
+                                                        destStack.getQuantity() + taking));
+
+                                        toTake -= taking;
+                                        amountTaken += taking;
+                                        remainingToTake -= taking;
+
+                                        int newContainerQty = available - taking;
+                                        if (newContainerQty <= 0) {
+                                            container.setItemStackForSlot(i, null);
+                                        } else {
+                                            container.setItemStackForSlot(i,
+                                                    new com.hypixel.hytale.server.core.inventory.ItemStack(itemId,
+                                                            newContainerQty));
+                                        }
+
+                                        available = newContainerQty;
+
+                                        if (toTake <= 0) {
+                                            added = true;
+                                            break;
+                                        } else {
+                                            stackToTake = new com.hypixel.hytale.server.core.inventory.ItemStack(itemId,
+                                                    toTake);
+                                        }
+                                    }
+                                }
+                            }
+                            if (added)
+                                break;
+                        }
+
+                        if (added && toTake > 0) {
+                            amountTaken += toTake;
+                            remainingToTake -= toTake;
+
+                            int newContainerQty = available - toTake;
+                            if (newContainerQty <= 0) {
+                                container.setItemStackForSlot(i, null);
+                            } else {
+                                container.setItemStackForSlot(i, new com.hypixel.hytale.server.core.inventory.ItemStack(
+                                        itemId, newContainerQty));
+                            }
+                        }
+                    }
+                }
+
+                if (amountTaken == 0) {
+                    future.complete(Optional
+                            .of(ContainerActionResult.failure("Item not found in container or inventory full")));
+                } else if (amountTaken < quantity) {
+                    future.complete(Optional.of(ContainerActionResult
+                            .partialSuccess("Inventory full or not enough items. Took " + amountTaken)));
+                } else {
+                    future.complete(Optional.of(ContainerActionResult.success()));
+                }
+            } catch (Exception e) {
+                logger.error("[Hycompanion] Error taking item from container: " + e.getMessage());
+                Sentry.captureException(e);
+                future.complete(Optional.of(ContainerActionResult.failure("Internal error: " + e.getMessage())));
+            }
+        });
+
+        return future;
+    }
 }

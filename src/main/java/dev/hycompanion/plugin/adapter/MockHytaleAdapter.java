@@ -4,6 +4,7 @@ import dev.hycompanion.plugin.api.GamePlayer;
 import dev.hycompanion.plugin.api.HytaleAPI;
 import dev.hycompanion.plugin.api.Location;
 import dev.hycompanion.plugin.api.inventory.*;
+import dev.hycompanion.plugin.api.results.*;
 import dev.hycompanion.plugin.core.npc.NpcData;
 import dev.hycompanion.plugin.core.npc.NpcInstanceData;
 import dev.hycompanion.plugin.utils.PluginLogger;
@@ -303,69 +304,68 @@ public class MockHytaleAdapter implements HytaleAPI {
     @Override
     public List<dev.hycompanion.plugin.core.world.BlockInfo> getAvailableBlocks() {
         logger.info("[MOCK] Getting available blocks (sample data)");
-        
+
         // Sample blocks based on hytaleitemids.com structure
         return List.of(
-            // Wood blocks
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Wood_Cedar_Trunk", "Cedar Log"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Wood_Oak_Trunk", "Oak Log"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Wood_Birch_Trunk", "Birch Log"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Wood_Spruce_Trunk", "Spruce Log"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Wood_Cedar_Plank", "Cedar Plank"),
-            
-            // Stone blocks
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Stone_Cobble", "Cobblestone"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Stone_Granite_Raw", "Raw Granite"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Stone_Marble", "Marble"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Stone_Sandstone", "Sandstone"),
-            
-            // Ores
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Ore_Iron", "Iron Ore"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Ore_Gold", "Gold Ore"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Ore_Coal", "Coal Ore"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Ore_Diamond", "Diamond Ore"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Ore_Copper", "Copper Ore"),
-            
-            // Plants
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Plant_Crop_Mushroom_Block_Blue_Trunk", "Blue Mushroom Trunk"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Plant_Flower_Rose", "Rose"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Plant_Grass", "Grass"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Plant_Leaf_Oak", "Oak Leaves"),
-            
-            // Soils
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Dirt", "Dirt"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Sand", "Sand"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Gravel", "Gravel"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Clay", "Clay"),
-            
-            // Fluids
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Fluid_Water", "Water"),
-            dev.hycompanion.plugin.core.world.BlockClassifier.classify(
-                "Fluid_Lava", "Lava")
-        );
+                // Wood blocks
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Wood_Cedar_Trunk", "Cedar Log"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Wood_Oak_Trunk", "Oak Log"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Wood_Birch_Trunk", "Birch Log"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Wood_Spruce_Trunk", "Spruce Log"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Wood_Cedar_Plank", "Cedar Plank"),
+
+                // Stone blocks
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Stone_Cobble", "Cobblestone"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Stone_Granite_Raw", "Raw Granite"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Stone_Marble", "Marble"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Stone_Sandstone", "Sandstone"),
+
+                // Ores
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Ore_Iron", "Iron Ore"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Ore_Gold", "Gold Ore"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Ore_Coal", "Coal Ore"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Ore_Diamond", "Diamond Ore"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Ore_Copper", "Copper Ore"),
+
+                // Plants
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Plant_Crop_Mushroom_Block_Blue_Trunk", "Blue Mushroom Trunk"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Plant_Flower_Rose", "Rose"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Plant_Grass", "Grass"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Plant_Leaf_Oak", "Oak Leaves"),
+
+                // Soils
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Dirt", "Dirt"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Sand", "Sand"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Gravel", "Gravel"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Clay", "Clay"),
+
+                // Fluids
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Fluid_Water", "Water"),
+                dev.hycompanion.plugin.core.world.BlockClassifier.classify(
+                        "Fluid_Lava", "Lava"));
     }
 
     // ========== Thinking Indicator ==========
@@ -374,7 +374,6 @@ public class MockHytaleAdapter implements HytaleAPI {
     public void showThinkingIndicator(UUID npcInstanceId) {
         logger.info("[MOCK] Showing thinking indicator for NPC: " + npcInstanceId);
     }
-
 
     @Override
     public void hideThinkingIndicator(UUID npcInstanceId) {
@@ -418,9 +417,14 @@ public class MockHytaleAdapter implements HytaleAPI {
     }
 
     @Override
-    public CompletableFuture<Optional<Map<String, Object>>> scanBlocks(UUID npcId, int radius) {
-        // TODO Auto-generated method stub
-        throw new UnsupportedOperationException("Unimplemented method 'scanBlocks'");
+    public CompletableFuture<Optional<Map<String, Object>>> scanBlocks(UUID npcId, int radius, boolean containersOnly) {
+        logger.info("[MOCK] Scanning blocks for NPC " + npcId + " radius: " + radius + ", containersOnly: "
+                + containersOnly);
+        return CompletableFuture.completedFuture(Optional.of(Map.of(
+                "current_position", Map.of("x", 0, "y", 0, "z", 0),
+                "radius", radius,
+                "categories", Map.of(),
+                "blocks", Map.of())));
     }
 
     @Override
@@ -449,9 +453,8 @@ public class MockHytaleAdapter implements HytaleAPI {
         logger.info("[MOCK] Breaking block at " + targetBlock + " for NPC " + npcInstanceId);
         // Simulate breaking a wood block
         List<Map<String, Object>> drops = List.of(
-            Map.of("itemId", "Wood_Beech", "quantity", 2),
-            Map.of("itemId", "Sapling_Beech", "quantity", 1)
-        );
+                Map.of("itemId", "Wood_Beech", "quantity", 2),
+                Map.of("itemId", "Sapling_Beech", "quantity", 1));
         Map<String, Object> dropLocation = Map.of("x", targetBlock.x(), "y", targetBlock.y(), "z", targetBlock.z());
         return BreakResult.success("Wood_Beech_Trunk", 5, drops, dropLocation, 45.0);
     }
@@ -460,20 +463,22 @@ public class MockHytaleAdapter implements HytaleAPI {
     public PickupResult pickupItems(UUID npcInstanceId, double radius, String itemId, int maxItems) {
         logger.info("[MOCK] Picking up items within " + radius + " blocks for NPC " + npcInstanceId);
         List<Map<String, Object>> items = List.of(
-            Map.of("itemId", itemId != null ? itemId : "Wood_Beech", "quantity", 2)
-        );
+                Map.of("itemId", itemId != null ? itemId : "Wood_Beech", "quantity", 2));
         return PickupResult.success(2, items, 0);
     }
 
     @Override
-    public UseResult useHeldItem(UUID npcInstanceId, Location target, int useCount, long intervalMs, TargetType targetType) {
-        logger.info("[MOCK] Using held item " + useCount + " times on " + targetType + " at " + target + " for NPC " + npcInstanceId);
+    public UseResult useHeldItem(UUID npcInstanceId, Location target, int useCount, long intervalMs,
+            TargetType targetType) {
+        logger.info("[MOCK] Using held item " + useCount + " times on " + targetType + " at " + target + " for NPC "
+                + npcInstanceId);
         return UseResult.success(useCount, false, null, false);
     }
 
     @Override
     public DropResult dropItem(UUID npcInstanceId, String itemId, int quantity, float throwSpeed) {
-        logger.info("[MOCK] Dropping " + quantity + "x " + itemId + " with speed " + throwSpeed + " for NPC " + npcInstanceId);
+        logger.info("[MOCK] Dropping " + quantity + "x " + itemId + " with speed " + throwSpeed + " for NPC "
+                + npcInstanceId);
         return DropResult.success(itemId, quantity, 0);
     }
 
@@ -481,14 +486,12 @@ public class MockHytaleAdapter implements HytaleAPI {
     public InventorySnapshot getInventory(UUID npcInstanceId, boolean includeEmpty) {
         logger.info("[MOCK] Getting inventory for NPC " + npcInstanceId);
         Map<String, Object> armor = Map.of(
-            "head", Map.of("itemId", "Helmet_Iron", "quantity", 1),
-            "chest", Map.of("itemId", "Chestplate_Leather", "quantity", 1)
-        );
+                "head", Map.of("itemId", "Helmet_Iron", "quantity", 1),
+                "chest", Map.of("itemId", "Chestplate_Leather", "quantity", 1));
         List<Map<String, Object>> hotbar = List.of(
-            Map.of("slot", 0, "itemId", "Axe_Steel", "quantity", 1, "isActive", true),
-            Map.of("slot", 1, "itemId", "Pickaxe_Stone", "quantity", 1, "isActive", false),
-            Map.of("slot", 2, "itemId", null, "quantity", 0, "isActive", false)
-        );
+                Map.of("slot", 0, "itemId", "Axe_Steel", "quantity", 1, "isActive", true),
+                Map.of("slot", 1, "itemId", "Pickaxe_Stone", "quantity", 1, "isActive", false),
+                Map.of("slot", 2, "itemId", null, "quantity", 0, "isActive", false));
         List<Map<String, Object>> storage = List.of();
         Map<String, Object> heldItem = Map.of("itemId", "Axe_Steel", "quantity", 1);
         return InventorySnapshot.create(armor, hotbar, storage, heldItem, 3);
@@ -496,7 +499,8 @@ public class MockHytaleAdapter implements HytaleAPI {
 
     @Override
     public UnequipResult unequipItem(UUID npcInstanceId, String slot, boolean destroy) {
-        logger.info("[MOCK] Unequipping item from slot " + slot + " (destroy=" + destroy + ") for NPC " + npcInstanceId);
+        logger.info(
+                "[MOCK] Unequipping item from slot " + slot + " (destroy=" + destroy + ") for NPC " + npcInstanceId);
         Map<String, Object> itemRemoved = Map.of("itemId", "Helmet_Iron", "quantity", 1);
         if (destroy) {
             return UnequipResult.destroyed(slot, itemRemoved);
@@ -508,5 +512,32 @@ public class MockHytaleAdapter implements HytaleAPI {
     public boolean expandNpcInventory(UUID npcInstanceId, int storageSlots) {
         logger.info("[MOCK] Expanding inventory by " + storageSlots + " slots for NPC " + npcInstanceId);
         return true;
+    }
+
+    // ========== Container Operations ==========
+
+    @Override
+    public CompletableFuture<Optional<ContainerInventoryResult>> getContainerInventory(UUID npcInstanceId, int x, int y,
+            int z) {
+        logger.info("[MOCK] Getting container inventory at " + x + ", " + y + ", " + z + " for NPC " + npcInstanceId);
+        List<Map<String, Object>> mockItems = List.of(
+                Map.of("itemId", "Wood_Beech", "quantity", 10, "slot", 0));
+        return CompletableFuture.completedFuture(Optional.of(ContainerInventoryResult.success(mockItems)));
+    }
+
+    @Override
+    public CompletableFuture<Optional<ContainerActionResult>> storeItemInContainer(UUID npcInstanceId, int x, int y,
+            int z, String itemId, int quantity) {
+        logger.info("[MOCK] Storing " + quantity + "x " + itemId + " in container at " + x + ", " + y + ", " + z
+                + " for NPC " + npcInstanceId);
+        return CompletableFuture.completedFuture(Optional.of(ContainerActionResult.success()));
+    }
+
+    @Override
+    public CompletableFuture<Optional<ContainerActionResult>> takeItemFromContainer(UUID npcInstanceId, int x, int y,
+            int z, String itemId, int quantity) {
+        logger.info("[MOCK] Taking " + quantity + "x " + itemId + " from container at " + x + ", " + y + ", " + z
+                + " for NPC " + npcInstanceId);
+        return CompletableFuture.completedFuture(Optional.of(ContainerActionResult.success()));
     }
 }

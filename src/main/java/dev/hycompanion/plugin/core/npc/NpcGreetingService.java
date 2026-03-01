@@ -218,7 +218,7 @@ public class NpcGreetingService {
         prefix = prefix.replaceAll("[§&][0-9a-fk-orA-FK-OR]", "");
         String formattedMessage = prefix + npc.name() + ": " + greeting;
 
-        hytaleAPI.sendNpcMessage(npcInstanceId, playerId, formattedMessage);
+        hytaleAPI.sendNpcMessage(npcInstanceId, playerId, formattedMessage, greeting);
 
         logger.info("NPC [" + npcInstanceId + "] greeted player [" + player.name() + "]: " + greeting);
     }

@@ -155,7 +155,8 @@ public class ActionExecutor {
                 case "find_block" -> executeFindBlock(npcInstanceData, params, ack);
                 case "scan_blocks" -> executeScanBlocks(npcInstanceData, params, ack);
                 case "scan_entities" -> executeScanEntities(npcInstanceData, params, ack);
-                // case "find_entity" -> executeFindEntity(npcInstanceData, params, ack); // Deprecated
+                // case "find_entity" -> executeFindEntity(npcInstanceData, params, ack); //
+                // Deprecated
                 case "get_current_position" -> executeGetCurrentPosition(npcInstanceData, ack);
                 case "wait" -> executeWait(npcInstanceData, params, ack);
                 case "teleport_player" -> executeTeleportPlayer(npcInstanceData, playerId, params, ack);
@@ -167,6 +168,9 @@ public class ActionExecutor {
                 case "drop_item" -> executeDropItem(npcInstanceData, params, ack);
                 case "get_inventory" -> executeGetInventory(npcInstanceData, params, ack);
                 case "unequip_item" -> executeUnequipItem(npcInstanceData, params, ack);
+                case "get_container_inventory" -> executeGetContainerInventory(npcInstanceData, params, ack);
+                case "store_item_in_container" -> executeStoreItemInContainer(npcInstanceData, params, ack);
+                case "take_item_from_container" -> executeTakeItemFromContainer(npcInstanceData, params, ack);
                 default -> {
                     logger.warn("Unknown action received: " + action);
                     if (ack != null)
@@ -221,15 +225,17 @@ public class ActionExecutor {
     }
 
     /**
-     * SCAN_BLOCKS - Scan surroundings and return all unique block types with nearest coordinates
+     * SCAN_BLOCKS - Scan surroundings and return all unique block types with
+     * nearest coordinates
      */
     private void executeScanBlocks(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (params == null || ack == null)
             return;
 
         int radius = params.optInt("radius", 16);
+        boolean containersOnly = params.optBoolean("containersOnly", false);
 
-        hytaleAPI.scanBlocks(npcInstanceData.entityUuid(), radius).thenAccept(result -> {
+        hytaleAPI.scanBlocks(npcInstanceData.entityUuid(), radius, containersOnly).thenAccept(result -> {
             if (result.isPresent()) {
                 ack.call(new JSONObject(result.get()).toString());
             } else {
@@ -295,7 +301,8 @@ public class ActionExecutor {
      * This is the primary way NPCs communicate
      * 
      * If playerId is null or empty, broadcasts to all nearby players.
-     * If params.broadcast is true, broadcasts to all nearby players within chat distance.
+     * If params.broadcast is true, broadcasts to all nearby players within chat
+     * distance.
      * 
      * NOTE: Chat bubbles above NPC heads are NOT currently supported in Hytale's
      * plugin API. This feature would require custom UI implementation which is
@@ -346,10 +353,12 @@ public class ActionExecutor {
                 return;
             }
 
-            // Use NPC's chat distance for broadcast range, fallback to greeting range from config
+            // Use NPC's chat distance for broadcast range, fallback to greeting range from
+            // config
             Number chatDistance = npc != null ? npc.chatDistance() : null;
-            double broadcastRange = chatDistance != null ? chatDistance.doubleValue() : config.gameplay().greetingRange();
-            
+            double broadcastRange = chatDistance != null ? chatDistance.doubleValue()
+                    : config.gameplay().greetingRange();
+
             java.util.List<dev.hycompanion.plugin.api.GamePlayer> nearbyPlayers = hytaleAPI
                     .getNearbyPlayers(npcLoc.get(), broadcastRange);
 
@@ -364,7 +373,7 @@ public class ActionExecutor {
                     .toList();
 
             // Broadcast to all nearby players
-            hytaleAPI.broadcastNpcMessage(npcInstanceData.entityUuid(), playerIds, formattedMessage);
+            hytaleAPI.broadcastNpcMessage(npcInstanceData.entityUuid(), playerIds, formattedMessage, message);
 
             if (config.logging().logActions()) {
                 logger.info("NPC [" + npcInstanceData.entityUuid() + "] broadcasts to " +
@@ -386,7 +395,7 @@ public class ActionExecutor {
             });
 
             // Send to specific player only
-            hytaleAPI.sendNpcMessage(npcInstanceData.entityUuid(), playerId, formattedMessage);
+            hytaleAPI.sendNpcMessage(npcInstanceData.entityUuid(), playerId, formattedMessage, message);
 
             if (config.logging().logActions()) {
                 logger.info(
@@ -702,7 +711,8 @@ public class ActionExecutor {
     /**
      * TELEPORT_PLAYER - Teleport a player to specific coordinates
      */
-    private void executeTeleportPlayer(NpcInstanceData npcInstanceData, String playerId, JSONObject params, io.socket.client.Ack ack) {
+    private void executeTeleportPlayer(NpcInstanceData npcInstanceData, String playerId, JSONObject params,
+            io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
             if (ack != null)
                 ack.call("{\"error\": \"NPC data missing\"}");
@@ -730,7 +740,8 @@ public class ActionExecutor {
         double y = params.optDouble("y", 0);
         double z = params.optDouble("z", 0);
 
-        logger.info("Trying to teleport player action: " + locationName + " in world " + worldName + " at " + x + ", " + y + ", " + z);
+        logger.info("Trying to teleport player action: " + locationName + " in world " + worldName + " at " + x + ", "
+                + y + ", " + z);
 
         Location destination = Location.of(x, y, z, worldName);
 
@@ -753,7 +764,7 @@ public class ActionExecutor {
         }
 
         if (config.logging().logActions()) {
-            logger.info("[NPC:" + npcInstanceId + "] teleport player [" + playerId + "] to " + locationName + 
+            logger.info("[NPC:" + npcInstanceId + "] teleport player [" + playerId + "] to " + locationName +
                     " (" + x + ", " + y + ", " + z + "): " + (success ? "SUCCESS" : "FAILED"));
         }
     }
@@ -788,13 +799,14 @@ public class ActionExecutor {
             json.put("success", result.success());
             json.put("itemId", result.itemId() != null ? result.itemId() : org.json.JSONObject.NULL);
             json.put("equippedSlot", result.equippedSlot() != null ? result.equippedSlot() : org.json.JSONObject.NULL);
-            json.put("previousItem", result.previousItem() != null ? new org.json.JSONObject(result.previousItem()) : org.json.JSONObject.NULL);
+            json.put("previousItem", result.previousItem() != null ? new org.json.JSONObject(result.previousItem())
+                    : org.json.JSONObject.NULL);
             json.put("error", result.error() != null ? result.error() : org.json.JSONObject.NULL);
             ack.call(json.toString());
         }
 
         if (config.logging().logActions()) {
-            logger.info("[NPC:" + npcInstanceId + "] equip " + itemId + " to " + slot + ": " + 
+            logger.info("[NPC:" + npcInstanceId + "] equip " + itemId + " to " + slot + ": " +
                     (result.success() ? "SUCCESS" : "FAILED"));
         }
     }
@@ -834,15 +846,20 @@ public class ActionExecutor {
             json.put("blockBroken", result.blockBroken());
             json.put("blockId", result.blockId() != null ? result.blockId() : org.json.JSONObject.NULL);
             json.put("attemptsNeeded", result.attemptsNeeded());
-            json.put("drops", result.drops() != null ? new org.json.JSONArray(result.drops()) : org.json.JSONObject.NULL);
-            json.put("dropsDetectedAt", result.dropsDetectedAt() != null ? new org.json.JSONObject(result.dropsDetectedAt()) : org.json.JSONObject.NULL);
-            json.put("toolDurabilityRemaining", result.toolDurabilityRemaining() != null ? result.toolDurabilityRemaining() : org.json.JSONObject.NULL);
+            json.put("drops",
+                    result.drops() != null ? new org.json.JSONArray(result.drops()) : org.json.JSONObject.NULL);
+            json.put("dropsDetectedAt",
+                    result.dropsDetectedAt() != null ? new org.json.JSONObject(result.dropsDetectedAt())
+                            : org.json.JSONObject.NULL);
+            json.put("toolDurabilityRemaining",
+                    result.toolDurabilityRemaining() != null ? result.toolDurabilityRemaining()
+                            : org.json.JSONObject.NULL);
             json.put("error", result.error() != null ? result.error() : org.json.JSONObject.NULL);
             ack.call(json.toString());
         }
 
         if (config.logging().logActions()) {
-            logger.info("[NPC:" + npcInstanceId + "] break block at " + target + ": " + 
+            logger.info("[NPC:" + npcInstanceId + "] break block at " + target + ": " +
                     (result.blockBroken() ? "BROKEN" : "FAILED"));
         }
     }
@@ -868,14 +885,15 @@ public class ActionExecutor {
             org.json.JSONObject json = new org.json.JSONObject();
             json.put("success", result.success());
             json.put("itemsPickedUp", result.itemsPickedUp());
-            json.put("itemsByType", result.itemsByType() != null ? new org.json.JSONArray(result.itemsByType()) : org.json.JSONObject.NULL);
+            json.put("itemsByType", result.itemsByType() != null ? new org.json.JSONArray(result.itemsByType())
+                    : org.json.JSONObject.NULL);
             json.put("itemsRemaining", result.itemsRemaining());
             json.put("error", result.error() != null ? result.error() : org.json.JSONObject.NULL);
             ack.call(json.toString());
         }
 
         if (config.logging().logActions()) {
-            logger.info("[NPC:" + npcInstanceId + "] pickup items within " + radius + " blocks: " + 
+            logger.info("[NPC:" + npcInstanceId + "] pickup items within " + radius + " blocks: " +
                     result.itemsPickedUp() + " items picked up");
         }
     }
@@ -906,9 +924,8 @@ public class ActionExecutor {
         String targetTypeStr = params.optString("targetType", "block");
 
         Location target = Location.of(x, y, z);
-        var targetType = "entity".equals(targetTypeStr) ? 
-                dev.hycompanion.plugin.api.HytaleAPI.TargetType.ENTITY : 
-                dev.hycompanion.plugin.api.HytaleAPI.TargetType.BLOCK;
+        var targetType = "entity".equals(targetTypeStr) ? dev.hycompanion.plugin.api.HytaleAPI.TargetType.ENTITY
+                : dev.hycompanion.plugin.api.HytaleAPI.TargetType.BLOCK;
 
         var result = hytaleAPI.useHeldItem(npcInstanceId, target, useCount, useIntervalMs, targetType);
 
@@ -916,15 +933,17 @@ public class ActionExecutor {
             org.json.JSONObject json = new org.json.JSONObject();
             json.put("success", result.success());
             json.put("usesPerformed", result.usesPerformed());
-            json.put("targetDestroyed", result.targetDestroyed() != null ? result.targetDestroyed() : org.json.JSONObject.NULL);
-            json.put("targetHealthRemaining", result.targetHealthRemaining() != null ? result.targetHealthRemaining() : org.json.JSONObject.NULL);
+            json.put("targetDestroyed",
+                    result.targetDestroyed() != null ? result.targetDestroyed() : org.json.JSONObject.NULL);
+            json.put("targetHealthRemaining",
+                    result.targetHealthRemaining() != null ? result.targetHealthRemaining() : org.json.JSONObject.NULL);
             json.put("toolBroke", result.toolBroke());
             json.put("error", result.error() != null ? result.error() : org.json.JSONObject.NULL);
             ack.call(json.toString());
         }
 
         if (config.logging().logActions()) {
-            logger.info("[NPC:" + npcInstanceId + "] use held item " + useCount + " times: " + 
+            logger.info("[NPC:" + npcInstanceId + "] use held item " + useCount + " times: " +
                     result.usesPerformed() + " uses performed");
         }
     }
@@ -964,7 +983,7 @@ public class ActionExecutor {
         }
 
         if (config.logging().logActions()) {
-            logger.info("[NPC:" + npcInstanceId + "] drop " + quantity + "x " + itemId + ": " + 
+            logger.info("[NPC:" + npcInstanceId + "] drop " + quantity + "x " + itemId + ": " +
                     (result.success() ? "SUCCESS" : "FAILED"));
         }
     }
@@ -987,10 +1006,14 @@ public class ActionExecutor {
         if (ack != null) {
             org.json.JSONObject json = new org.json.JSONObject();
             json.put("success", result.success());
-            json.put("armor", result.armor() != null ? new org.json.JSONObject(result.armor()) : org.json.JSONObject.NULL);
-            json.put("hotbar", result.hotbar() != null ? new org.json.JSONArray(result.hotbar()) : org.json.JSONObject.NULL);
-            json.put("storage", result.storage() != null ? new org.json.JSONArray(result.storage()) : org.json.JSONObject.NULL);
-            json.put("heldItem", result.heldItem() != null ? new org.json.JSONObject(result.heldItem()) : org.json.JSONObject.NULL);
+            json.put("armor",
+                    result.armor() != null ? new org.json.JSONObject(result.armor()) : org.json.JSONObject.NULL);
+            json.put("hotbar",
+                    result.hotbar() != null ? new org.json.JSONArray(result.hotbar()) : org.json.JSONObject.NULL);
+            json.put("storage",
+                    result.storage() != null ? new org.json.JSONArray(result.storage()) : org.json.JSONObject.NULL);
+            json.put("heldItem",
+                    result.heldItem() != null ? new org.json.JSONObject(result.heldItem()) : org.json.JSONObject.NULL);
             json.put("totalItems", result.totalItems());
             json.put("error", result.error() != null ? result.error() : org.json.JSONObject.NULL);
             ack.call(json.toString());
@@ -1028,7 +1051,8 @@ public class ActionExecutor {
             org.json.JSONObject json = new org.json.JSONObject();
             json.put("success", result.success());
             json.put("slot", result.slot() != null ? result.slot() : org.json.JSONObject.NULL);
-            json.put("itemRemoved", result.itemRemoved() != null ? new org.json.JSONObject(result.itemRemoved()) : org.json.JSONObject.NULL);
+            json.put("itemRemoved", result.itemRemoved() != null ? new org.json.JSONObject(result.itemRemoved())
+                    : org.json.JSONObject.NULL);
             json.put("movedToStorage", result.movedToStorage());
             json.put("destroyed", result.destroyed());
             json.put("error", result.error() != null ? result.error() : org.json.JSONObject.NULL);
@@ -1036,8 +1060,108 @@ public class ActionExecutor {
         }
 
         if (config.logging().logActions()) {
-            logger.info("[NPC:" + npcInstanceId + "] unequip item from " + slot + 
+            logger.info("[NPC:" + npcInstanceId + "] unequip item from " + slot +
                     (destroy ? " (destroyed)" : "") + ": " + (result.success() ? "SUCCESS" : "FAILED"));
         }
+    }
+
+    /**
+     * GET_CONTAINER_INVENTORY - Retrieve contents of a container
+     */
+    private void executeGetContainerInventory(NpcInstanceData npcInstanceData, JSONObject params,
+            io.socket.client.Ack ack) {
+        if (npcInstanceData == null || params == null || ack == null)
+            return;
+        UUID npcInstanceId = npcInstanceData.entityUuid();
+        int x = params.optInt("targetX");
+        int y = params.optInt("targetY");
+        int z = params.optInt("targetZ");
+
+        hytaleAPI.getContainerInventory(npcInstanceId, x, y, z).thenAccept(resultOpt -> {
+            if (resultOpt.isPresent()) {
+                var res = resultOpt.get();
+                org.json.JSONObject json = new org.json.JSONObject();
+                json.put("success", res.isSuccess());
+                json.put("message", res.getMessage() != null ? res.getMessage() : org.json.JSONObject.NULL);
+                if (res.isSuccess()) {
+                    org.json.JSONArray itemsArray = new org.json.JSONArray();
+                    if (res.getItems() != null) {
+                        for (var item : res.getItems()) {
+                            itemsArray.put(new org.json.JSONObject(item));
+                        }
+                    }
+                    json.put("items", itemsArray);
+                }
+                ack.call(json.toString());
+            } else {
+                ack.call("{\"success\": false, \"message\": \"Failed to get container inventory\"}");
+            }
+        }).exceptionally(e -> {
+            logger.error("Error getting container inventory: " + e.getMessage());
+            ack.call("{\"success\": false, \"message\": \"Internal error\"}");
+            return null;
+        });
+    }
+
+    /**
+     * STORE_ITEM_IN_CONTAINER - Store an item from NPC inventory into a container
+     */
+    private void executeStoreItemInContainer(NpcInstanceData npcInstanceData, JSONObject params,
+            io.socket.client.Ack ack) {
+        if (npcInstanceData == null || params == null || ack == null)
+            return;
+        UUID npcInstanceId = npcInstanceData.entityUuid();
+        int x = params.optInt("targetX");
+        int y = params.optInt("targetY");
+        int z = params.optInt("targetZ");
+        String itemId = params.optString("itemId");
+        int quantity = params.optInt("quantity", 1);
+
+        hytaleAPI.storeItemInContainer(npcInstanceId, x, y, z, itemId, quantity).thenAccept(resultOpt -> {
+            if (resultOpt.isPresent()) {
+                var res = resultOpt.get();
+                org.json.JSONObject json = new org.json.JSONObject();
+                json.put("success", res.isSuccess());
+                json.put("message", res.getMessage() != null ? res.getMessage() : org.json.JSONObject.NULL);
+                ack.call(json.toString());
+            } else {
+                ack.call("{\"success\": false, \"message\": \"Failed to store item\"}");
+            }
+        }).exceptionally(e -> {
+            logger.error("Error storing item in container: " + e.getMessage());
+            ack.call("{\"success\": false, \"message\": \"Internal error\"}");
+            return null;
+        });
+    }
+
+    /**
+     * TAKE_ITEM_FROM_CONTAINER - Take an item from a container into NPC inventory
+     */
+    private void executeTakeItemFromContainer(NpcInstanceData npcInstanceData, JSONObject params,
+            io.socket.client.Ack ack) {
+        if (npcInstanceData == null || params == null || ack == null)
+            return;
+        UUID npcInstanceId = npcInstanceData.entityUuid();
+        int x = params.optInt("targetX");
+        int y = params.optInt("targetY");
+        int z = params.optInt("targetZ");
+        String itemId = params.optString("itemId");
+        int quantity = params.optInt("quantity", 1);
+
+        hytaleAPI.takeItemFromContainer(npcInstanceId, x, y, z, itemId, quantity).thenAccept(resultOpt -> {
+            if (resultOpt.isPresent()) {
+                var res = resultOpt.get();
+                org.json.JSONObject json = new org.json.JSONObject();
+                json.put("success", res.isSuccess());
+                json.put("message", res.getMessage() != null ? res.getMessage() : org.json.JSONObject.NULL);
+                ack.call(json.toString());
+            } else {
+                ack.call("{\"success\": false, \"message\": \"Failed to take item\"}");
+            }
+        }).exceptionally(e -> {
+            logger.error("Error taking item from container: " + e.getMessage());
+            ack.call("{\"success\": false, \"message\": \"Internal error\"}");
+            return null;
+        });
     }
 }
