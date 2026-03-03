@@ -66,7 +66,7 @@ public class RoleGenerator {
             manifestJson.addProperty("Group", "dev.hycompanion");
             manifestJson.addProperty("Name", "Hycompanion");
             if (!manifestJson.has("Version") || manifestJson.get("Version").isJsonNull()) {
-                manifestJson.addProperty("Version", "1.1.5");
+                manifestJson.addProperty("Version", "1.1.6");
             }
             if (!manifestJson.has("Description") || manifestJson.get("Description").isJsonNull()) {
                 manifestJson.addProperty("Description", "Hycompanion dynamic NPC role assets");
@@ -212,7 +212,7 @@ public class RoleGenerator {
                 try {
                     payload.put("apiKey", apiKey);
                     var serverInfo = new org.json.JSONObject();
-                    serverInfo.put("version", "1.1.5-SNAPSHOT");
+                    serverInfo.put("version", "1.1.6-SNAPSHOT");
                     serverInfo.put("playerCount", 0);
                     payload.put("serverInfo", serverInfo);
                 } catch (Exception e) {

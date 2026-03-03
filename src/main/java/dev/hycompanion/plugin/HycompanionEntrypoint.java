@@ -45,12 +45,12 @@ import java.util.Set;
  * when the plugin is loaded by a real Hytale server.
  * 
  * @author Hycompanion Team
- * @version 1.1.5
+ * @version 1.1.6
  */
 public class HycompanionEntrypoint extends JavaPlugin {
 
     private static final HytaleLogger HYTALE_LOGGER = HytaleLogger.forEnclosingClass();
-    public static final String VERSION = "1.1.5-SNAPSHOT";
+    public static final String VERSION = "1.1.6-SNAPSHOT";
 
     // Plugin components
     private PluginLogger logger;
