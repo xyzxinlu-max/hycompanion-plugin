@@ -74,12 +74,12 @@ public class MockHytaleAdapter implements HytaleAPI {
     }
 
     @Override
-    public void sendNpcMessage(UUID npcInstanceId, String playerId, String message) {
+    public void sendNpcMessage(UUID npcInstanceId, String playerId, String message, String rawMessage) {
         logger.info("[MOCK] NPC [" + npcInstanceId + "] says to player [" + playerId + "]: " + message);
     }
 
     @Override
-    public void broadcastNpcMessage(UUID npcInstanceId, List<String> playerIds, String message) {
+    public void broadcastNpcMessage(UUID npcInstanceId, List<String> playerIds, String message, String rawMessage) {
         logger.info("[MOCK] NPC [" + npcInstanceId + "] broadcasts to " + playerIds.size() + " players: " + message);
     }
 
