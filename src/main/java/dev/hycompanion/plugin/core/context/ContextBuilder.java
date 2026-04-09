@@ -7,26 +7,33 @@ import dev.hycompanion.plugin.utils.PluginLogger;
 import java.util.List;
 
 /**
- * Builds world context for NPC conversations
- * 
- * Gathers environmental data (time, weather, nearby players) to enrich
- * the context sent to the backend for more immersive NPC responses.
+ * 世界上下文构建器 - 为NPC对话构建环境上下文信息。
+ *
+ * 收集环境数据（时间、天气、附近玩家），丰富发送给后端的上下文，
+ * 使NPC的回复更加沉浸和真实。
  */
 public class ContextBuilder {
 
     private final HytaleAPI hytaleAPI;
     private final PluginLogger logger;
 
-    // Default radius for nearby player detection
+    // 附近玩家检测的默认半径（方块/米）
     private static final double NEARBY_PLAYER_RADIUS = 50.0;
 
+    /**
+     * 构造上下文构建器
+     * @param hytaleAPI Hytale服务器API接口
+     * @param logger    日志记录器
+     */
     public ContextBuilder(HytaleAPI hytaleAPI, PluginLogger logger) {
         this.hytaleAPI = hytaleAPI;
         this.logger = logger;
     }
 
     /**
-     * Build full world context from player location
+     * 根据玩家位置构建完整的世界上下文。
+     * 包含位置坐标、时间、天气和附近玩家信息。
+     * 如果构建失败，返回仅包含位置的最简上下文。
      */
     public WorldContext buildContext(Location playerLocation) {
         if (playerLocation == null) {
@@ -50,7 +57,8 @@ public class ContextBuilder {
     }
 
     /**
-     * Build context from location string
+     * 根据位置字符串构建世界上下文。
+     * 先将字符串解析为Location对象，再调用完整的构建方法。
      */
     public WorldContext buildContext(String locationStr) {
         try {
@@ -62,7 +70,7 @@ public class ContextBuilder {
     }
 
     /**
-     * Build minimal context (just location)
+     * 构建最简上下文（仅包含位置信息）
      */
     public WorldContext buildMinimalContext(Location location) {
         String locationStr = location != null ? location.toCoordString() : "0,64,0";

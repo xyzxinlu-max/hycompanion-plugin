@@ -63,3 +63,24 @@ sentry.properties
 .cursor
 server_sources
 docs
+
+# Extracted dependency files (should not be committed)
+META-INF/
+aix/
+ch/
+com/
+darwin/
+freebsd/
+google/
+io/
+it/
+joptsimple/
+linux/
+org/
+update/
+win/
+migration/
+jwks_bundled.json
+*.so
+*.dll
+*.jnilib

@@ -19,52 +19,61 @@ import java.nio.file.StandardCopyOption;
 
 /**
  * Hycompanion Plugin - Main Entry Point
- * 
+ * Hycompanion 插件 - 主入口点
+ *
  * AI-powered NPC companion system for Hytale servers.
- * Connects to the Hycompanion Cloud Backend to provide intelligent,
- * context-aware NPC interactions.
- * 
+ * 面向 Hytale 服务器的 AI 驱动 NPC 伴侣系统。
+ * 连接到 Hycompanion 云后端，提供智能、具有上下文感知的 NPC 交互。
+ *
+ * 本类同时用于独立测试模式（standalone），包含交互式控制台。
+ *
  * @author Hycompanion Team / NOLDO
  * @version 1.1.6
  * @see <a href="https://hycompanion.dev">Hycompanion Website</a>
  */
 public class HycompanionPlugin {
 
-    // Singleton instance for global access
+    // 单例实例，用于全局访问
     private static HycompanionPlugin instance;
 
-    // Plugin version
+    // 插件版本号
     public static final String VERSION = "1.1.6-SNAPSHOT";
 
-    // Plugin components
-    private PluginConfig config;
-    private PluginLogger logger;
-    private SocketManager socketManager;
-    private NpcManager npcManager;
-    private NpcConfigManager npcConfigManager;
-    private ActionExecutor actionExecutor;
-    private ChatHandler chatHandler;
-    private ContextBuilder contextBuilder;
-    private HytaleAPI hytaleAPI;
+    // ===== 插件核心组件 =====
+    private PluginConfig config;           // 插件配置
+    private PluginLogger logger;           // 日志记录器
+    private SocketManager socketManager;   // Socket.IO 网络连接管理器
+    private NpcManager npcManager;         // NPC 数据与实例管理器
+    private NpcConfigManager npcConfigManager; // NPC 配置缓存管理器
+    private ActionExecutor actionExecutor; // 后端动作执行器（处理 say、emote、move 等）
+    private ChatHandler chatHandler;       // 玩家聊天处理器
+    private ContextBuilder contextBuilder; // 游戏上下文构建器（位置、时间、天气等）
+    private HytaleAPI hytaleAPI;           // Hytale API 抽象层
 
-    // Plugin state
-    private boolean enabled = false;
-    private Path dataFolder;
+    // 插件状态
+    private boolean enabled = false;       // 插件是否已启用
+    private Path dataFolder;               // 插件数据文件夹路径
 
     /**
-     * Main constructor - initializes the plugin
+     * 主构造方法 - 初始化插件实例
+     * 设置单例引用和默认数据文件夹路径（用于独立测试模式）
      */
     public HycompanionPlugin() {
         instance = this;
-        // Default data folder for standalone testing
+        // 独立测试模式下的默认数据文件夹
         this.dataFolder = Path.of("plugins", "Hycompanion");
     }
 
     /**
-     * Plugin enable - called when plugin is loaded
-     * 
-     * This should be called from Hytale's plugin lifecycle
-     * e.g., extends HytalePlugin { @Override void onEnable() }
+     * 插件启用方法 - 在插件加载时调用
+     *
+     * 负责完整的初始化流程：
+     * 1. 创建数据文件夹并复制默认配置
+     * 2. 加载配置文件
+     * 3. 初始化 Hytale API 适配器（真实服务器或模拟模式）
+     * 4. 初始化各管理器（NPC、动作执行、聊天处理等）
+     * 5. 建立与后端的 Socket.IO 连接
+     * 6. 注册命令和事件监听器
      */
     public void onEnable() {
         logger = new PluginLogger("Hycompanion");
@@ -75,51 +84,51 @@ public class HycompanionPlugin {
         logger.info("======================================");
 
         try {
-            // Create data folder if it doesn't exist
+            // 如果数据文件夹不存在则创建
             Files.createDirectories(dataFolder);
 
-            // Copy default config if not exists
+            // 如果默认配置文件不存在则复制
             copyDefaultConfig();
 
-            // Load configuration
+            // 加载配置文件
             config = PluginConfig.load(dataFolder.resolve("config.yml"));
             logger.info("Configuration loaded successfully");
 
-            // Update logger with config
+            // 根据配置设置调试模式
             logger.setDebugMode(config.gameplay().debugMode());
 
-            // Initialize Hytale API adapter
-            // Detect if running on real Hytale server or standalone mode
+            // 初始化 Hytale API 适配器
+            // 检测当前运行环境：真实 Hytale 服务器还是独立测试模式
             if (isHytaleServerEnvironment()) {
-                // Running on real Hytale server - use real API
-                // Note: Requires JavaPlugin instance from Hytale's plugin system
+                // 在真实 Hytale 服务器上运行 - 但当前仍使用模拟适配器
+                // 注意：真实适配器需要 JavaPlugin 实例（由 HycompanionEntrypoint 提供）
                 logger.info("Detected Hytale Server environment");
                 logger.info("Hytale API adapter requires JavaPlugin context - using Mock for now");
                 hytaleAPI = new MockHytaleAdapter(logger);
             } else {
-                // Standalone testing mode
+                // 独立测试模式 - 使用模拟适配器
                 hytaleAPI = new MockHytaleAdapter(logger);
                 logger.info("Hytale API adapter initialized (Standalone/Mock Mode)");
             }
 
-            // Initialize managers
+            // 初始化各管理器
             npcManager = new NpcManager(logger, hytaleAPI);
             npcConfigManager = new NpcConfigManager(dataFolder.resolve(config.npc().cacheDirectory()), logger);
             contextBuilder = new ContextBuilder(hytaleAPI, logger);
 
-            // Initialize action executor
+            // 初始化动作执行器（处理后端返回的 MCP 工具动作）
             actionExecutor = new ActionExecutor(hytaleAPI, npcManager, logger, config);
 
-            // Initialize chat handler
+            // 初始化聊天处理器（处理玩家与 NPC 的对话）
             chatHandler = new ChatHandler(npcManager, contextBuilder, logger, config);
 
-            // Initialize socket manager and connect
+            // 初始化 Socket.IO 连接并连接到后端
             initializeSocketConnection();
 
-            // Register commands
+            // 注册插件命令
             registerCommands();
 
-            // Register event listeners
+            // 注册事件监听器
             registerEventListeners();
 
             enabled = true;
@@ -132,15 +141,18 @@ public class HycompanionPlugin {
     }
 
     /**
-     * Plugin disable - called when plugin is unloaded
+     * 插件禁用方法 - 在插件卸载时调用
+     * 断开后端连接，保存 NPC 配置缓存
      */
     public void onDisable() {
         logger.info("Disabling Hycompanion...");
 
+        // 断开与后端的 Socket.IO 连接
         if (socketManager != null) {
             socketManager.disconnect();
         }
 
+        // 保存所有 NPC 配置到本地缓存
         if (npcConfigManager != null) {
             npcConfigManager.saveAll();
         }
@@ -150,7 +162,8 @@ public class HycompanionPlugin {
     }
 
     /**
-     * Update API key in config.yml and reload
+     * 更新 config.yml 中的 API 密钥并重新加载配置
+     * @param newApiKey 新的 API 密钥
      */
     public void updateApiKey(String newApiKey) {
         try {
@@ -167,21 +180,22 @@ public class HycompanionPlugin {
     }
 
     /**
-     * Reload configuration and reconnect
+     * 重新加载配置并根据需要重连后端
+     * 热重载：无需重启插件即可应用新的配置
      */
     public void reload() {
         logger.info("Reloading Hycompanion...");
 
         try {
-            // Reload config
+            // 重新加载配置文件
             config = PluginConfig.load(dataFolder.resolve("config.yml"));
             logger.setDebugMode(config.gameplay().debugMode());
 
-            // Update components with new config
+            // 将新配置传递给各组件
             actionExecutor.setConfig(config);
             chatHandler.setConfig(config);
 
-            // Update SocketManager
+            // 更新 SocketManager 并在需要时重新连接
             if (socketManager != null) {
                 socketManager.setConfig(config);
                 socketManager.updateApiKey(config.connection().apiKey());
@@ -200,7 +214,8 @@ public class HycompanionPlugin {
     }
 
     /**
-     * Force sync NPCs from backend
+     * 强制从后端同步 NPC 数据
+     * 向后端发送同步请求，获取最新的 NPC 定义
      */
     public void forceSync() {
         if (socketManager != null && socketManager.isConnected()) {
@@ -212,22 +227,24 @@ public class HycompanionPlugin {
     }
 
     /**
-     * Get connection status
+     * 获取与后端的连接状态
+     * @return 是否已连接到后端
      */
     public boolean isConnected() {
         return socketManager != null && socketManager.isConnected();
     }
 
     /**
-     * Initialize socket connection to backend
+     * 初始化与后端的 Socket.IO 连接
+     * 创建 SocketManager 并建立连接，将聊天处理器与之关联
      */
     private void initializeSocketConnection() {
-        // Create server info for handshake
+        // 创建服务器信息用于握手认证
         ServerInfo serverInfo = new ServerInfo(
                 VERSION,
                 getOnlinePlayerCount());
 
-        // Initialize socket manager (no roleGenerator in standalone mode)
+        // 初始化 SocketManager（独立模式下没有 RoleGenerator）
         socketManager = new SocketManager(
                 config.connection().url(),
                 config.connection().apiKey(),
@@ -235,21 +252,22 @@ public class HycompanionPlugin {
                 actionExecutor,
                 npcManager,
                 npcConfigManager,
-                null, // No RoleGenerator in standalone mode
+                null, // 独立模式下没有 RoleGenerator
                 logger,
                 config,
                 hytaleAPI);
 
-        // Inject socket manager into chat handler
+        // 将 SocketManager 注入到聊天处理器中（用于发送聊天消息到后端）
         chatHandler.setSocketManager(socketManager);
 
-        // Connect
+        // 发起连接
         logger.info("Connecting to backend: " + config.connection().url());
         socketManager.connect();
     }
 
     /**
-     * Copy default config.yml from resources if it doesn't exist
+     * 从资源文件中复制默认的 config.yml（如果尚不存在）
+     * 首次运行时自动生成默认配置文件
      */
     private void copyDefaultConfig() throws IOException {
         Path configPath = dataFolder.resolve("config.yml");
@@ -264,22 +282,22 @@ public class HycompanionPlugin {
     }
 
     /**
-     * Register plugin commands
-     * TODO: [HYTALE-API] Integrate with Hytale command system
+     * 注册插件命令
+     * TODO: [HYTALE-API] 与 Hytale 命令系统集成
      */
     private void registerCommands() {
-        // TODO: [HYTALE-API] Register /hycompanion command
+        // TODO: [HYTALE-API] 注册 /hycompanion 命令
         // Example for Spigot-like API:
         // getCommand("hycompanion").setExecutor(new HycompanionCommand(this));
         logger.debug("Commands registration (pending Hytale API)");
     }
 
     /**
-     * Register event listeners
-     * TODO: [HYTALE-API] Integrate with Hytale event system
+     * 注册事件监听器
+     * TODO: [HYTALE-API] 与 Hytale 事件系统集成
      */
     private void registerEventListeners() {
-        // TODO: [HYTALE-API] Register chat listener
+        // TODO: [HYTALE-API] 注册聊天监听器
         // Example for Spigot-like API:
         // Bukkit.getPluginManager().registerEvents(new ChatListener(chatHandler),
         // this);
@@ -287,33 +305,35 @@ public class HycompanionPlugin {
     }
 
     /**
-     * Get current online player count
-     * TODO: [HYTALE-API] Get from actual server
+     * 获取当前在线玩家数量
+     * TODO: [HYTALE-API] 从实际服务器获取
      */
     private int getOnlinePlayerCount() {
-        // TODO: [HYTALE-API] Return actual player count
+        // TODO: [HYTALE-API] 返回实际玩家数量
         // e.g., return HytaleServer.getOnlinePlayers().size();
         return 0;
     }
 
     /**
-     * Detect if running on real Hytale Server environment
-     * Checks for presence of Hytale Server API classes
+     * 检测是否运行在真实的 Hytale 服务器环境中
+     * 通过反射检查 Hytale Server API 核心类是否存在
+     * @return 如果在真实 Hytale 服务器上运行则返回 true
      */
     private boolean isHytaleServerEnvironment() {
         try {
-            // Check if Hytale Server classes are available
+            // 检查 Hytale 服务器核心类是否可用
             Class.forName("com.hypixel.hytale.server.core.HytaleServer");
             Class.forName("com.hypixel.hytale.server.core.universe.Universe");
             return true;
         } catch (ClassNotFoundException e) {
-            // Running standalone or on a non-Hytale platform
+            // 独立运行或非 Hytale 平台
             return false;
         }
     }
 
-    // ========== Getters ==========
+    // ========== 访问器方法 ==========
 
+    /** 获取插件单例实例 */
     public static HycompanionPlugin getInstance() {
         return instance;
     }
@@ -350,10 +370,11 @@ public class HycompanionPlugin {
         return enabled;
     }
 
-    // ========== Main (for testing) ==========
+    // ========== 独立测试模式入口 ==========
 
     /**
-     * Main method for standalone testing with interactive console
+     * 独立测试模式的 main 方法
+     * 启动插件并提供交互式控制台，用于在没有 Hytale 服务器的情况下测试 NPC 对话
      */
     public static void main(String[] args) {
         System.out.println("╔════════════════════════════════════════════════════════════╗");
@@ -365,10 +386,10 @@ public class HycompanionPlugin {
         HycompanionPlugin plugin = new HycompanionPlugin();
         plugin.onEnable();
 
-        // Add shutdown hook
+        // 注册 JVM 关闭钩子，确保优雅退出
         Runtime.getRuntime().addShutdownHook(new Thread(plugin::onDisable));
 
-        // Wait for connection
+        // 等待与后端建立连接（最多 15 秒）
         System.out.println("\nWaiting for backend connection...");
         int attempts = 0;
         while (!plugin.isConnected() && attempts < 30) {
@@ -385,12 +406,14 @@ public class HycompanionPlugin {
             System.out.println("Check your config.yml settings (url, api_key)");
         }
 
-        // Start interactive console
+        // 启动交互式控制台
         runInteractiveConsole(plugin);
     }
 
     /**
-     * Interactive console for testing chat with NPCs
+     * 交互式控制台 - 用于测试与 NPC 的聊天
+     * 支持的命令：/chat、/list、/sync、/status、/reload、/npc、/player、/quit 等
+     * 也支持快捷聊天：设置默认 NPC 后直接输入消息即可发送
      */
     private static void runInteractiveConsole(HycompanionPlugin plugin) {
         java.util.Scanner scanner = new java.util.Scanner(System.in);
@@ -413,9 +436,9 @@ public class HycompanionPlugin {
         System.out.println("└─────────────────────────────────────────────────────────────┘");
         System.out.println();
 
-        String defaultNpcId = null;
-        String testPlayerId = "test-player-001";
-        String testPlayerName = "TestPlayer";
+        String defaultNpcId = null;              // 默认聊天目标 NPC ID
+        String testPlayerId = "test-player-001"; // 测试玩家 ID
+        String testPlayerName = "TestPlayer";    // 测试玩家名称
 
         System.out.print("> ");
         while (scanner.hasNextLine()) {
@@ -427,7 +450,7 @@ public class HycompanionPlugin {
             }
 
             if (input.startsWith("/")) {
-                // Command mode
+                // 命令模式：解析并执行控制台命令
                 String[] parts = input.substring(1).split("\\s+", 3);
                 String cmd = parts[0].toLowerCase();
 
@@ -504,7 +527,7 @@ public class HycompanionPlugin {
                     default -> System.out.println("Unknown command: " + cmd + ". Type /help for help.");
                 }
             } else {
-                // Quick chat to default NPC
+                // 快捷聊天模式：直接发送消息到默认 NPC
                 if (defaultNpcId == null) {
                     System.out.println("No default NPC set. Use /npc <npcId> or /chat <npcId> <message>");
                 } else {
@@ -517,7 +540,14 @@ public class HycompanionPlugin {
     }
 
     /**
-     * Send test chat message to backend
+     * 发送测试聊天消息到后端
+     * 构建模拟的游戏上下文（位置、时间、天气），通过 SocketManager 发送到云后端
+     *
+     * @param plugin     插件实例
+     * @param npcId      目标 NPC 的 ID
+     * @param playerId   测试玩家 ID
+     * @param playerName 测试玩家名称
+     * @param message    聊天消息内容
      */
     private static void sendTestChat(HycompanionPlugin plugin, String npcId, String playerId, String playerName,
             String message) {
@@ -528,13 +558,13 @@ public class HycompanionPlugin {
 
         System.out.println("[" + playerName + " → " + npcId + "]: " + message);
 
-        // Build context
+        // 构建模拟的游戏上下文信息
         var context = new com.google.gson.JsonObject();
         context.addProperty("location", "0,64,0");
         context.addProperty("timeOfDay", "noon");
         context.addProperty("weather", "clear");
 
-        // Send via socket manager
+        // 通过 SocketManager 发送聊天消息到后端
         plugin.getSocketManager().sendChat(npcId, null, playerId, playerName, message, context);
 
         System.out.println("(Waiting for response...)");

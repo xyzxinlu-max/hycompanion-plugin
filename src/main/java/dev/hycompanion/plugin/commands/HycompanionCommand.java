@@ -25,24 +25,24 @@ import java.util.Collection;
 import java.util.UUID;
 
 /**
- * Main command collection for /hycompanion
- * 
- * Available subcommands:
- * - /hycompanion register <key> - Set the Hycompanion API Key
- * - /hycompanion status - Show connection status
- * - /hycompanion sync - Force NPC sync from backend
- * - /hycompanion rediscover - Re-scan world for NPC entities
- * - /hycompanion list - List all loaded NPCs
- * - /hycompanion spawn <npc-id> - Spawn an NPC at player location
- * - /hycompanion despawn <npc-id> - Remove an NPC from the world
- * - /hycompanion despawn <external_id>:nearest - Remove nearest NPC by external ID
- * - /hycompanion tphere <npc-uuid> - Teleport an NPC to player's location
- * - /hycompanion tpto <npc-uuid> - Teleport player to NPC's location
- * - /hycompanion help - Show help message
+ * /hycompanion 主命令集合类
+ *
+ * 提供以下子命令：
+ * - /hycompanion register <key> - 设置API密钥
+ * - /hycompanion status - 查看连接状态
+ * - /hycompanion sync - 强制从后端同步NPC数据
+ * - /hycompanion rediscover - 重新扫描世界中的NPC实体
+ * - /hycompanion list - 列出所有已加载的NPC
+ * - /hycompanion spawn <npc-id> - 在玩家位置生成NPC
+ * - /hycompanion despawn <npc-id> - 从世界中移除NPC
+ * - /hycompanion despawn <external_id>:nearest - 移除距离最近的指定外部ID的NPC
+ * - /hycompanion tphere <npc-uuid> - 将NPC传送到玩家位置
+ * - /hycompanion tpto <npc-uuid> - 将玩家传送到NPC位置
+ * - /hycompanion help - 显示帮助信息
  */
 public class HycompanionCommand extends AbstractCommandCollection {
 
-    // Hytale uses hex colors, not Minecraft § codes
+    // Hytale使用十六进制颜色码，而非Minecraft的 § 颜色码
     private static final String COLOR_GOLD = "#FFB800";
     private static final String COLOR_GRAY = "#AAAAAA";
     private static final String COLOR_WHITE = "#FFFFFF";
@@ -50,16 +50,20 @@ public class HycompanionCommand extends AbstractCommandCollection {
     private static final String COLOR_RED = "#FF5555";
     private static final String COLOR_YELLOW = "#FFFF55";
 
+    /** 插件入口点引用，用于访问插件核心功能 */
     private final HycompanionEntrypoint plugin;
 
+    /**
+     * 构造主命令集合，注册所有子命令和别名
+     */
     public HycompanionCommand(HycompanionEntrypoint plugin) {
         super("hycompanion", "Hycompanion AI NPC plugin commands");
         this.plugin = plugin;
 
-        // Add aliases
+        // 添加命令别名：/hyc 和 /hc
         this.addAliases(new String[] { "hyc", "hc" });
 
-        // Register subcommands
+        // 注册所有子命令
         this.addSubCommand(new RegisterCommand());
         this.addSubCommand(new StatusCommand());
         this.addSubCommand(new SyncCommand());
@@ -72,24 +76,26 @@ public class HycompanionCommand extends AbstractCommandCollection {
         this.addSubCommand(new HelpCommand());
     }
 
+    /** 获取NPC管理器实例 */
     private NpcManager getNpcManager() {
         return plugin.getNpcManager();
     }
 
-    // Helper method to create colored message
+    /** 创建带颜色的消息 */
     private static Message colored(String text, String color) {
         return Message.raw(text).color(color);
     }
 
-    // Helper method for key-value display
+    /** 创建键值对格式的显示消息（键为灰色，值为白色） */
     private static Message keyValue(String key, String value) {
         return Message.raw("")
                 .insert(Message.raw(key + ": ").color(COLOR_GRAY))
                 .insert(Message.raw(value).color(COLOR_WHITE));
     }
 
-    // ========== Register Subcommand ==========
+    // ========== 注册API密钥子命令 ==========
 
+    /** register子命令 - 设置Hycompanion API密钥并重新加载插件 */
     private class RegisterCommand extends CommandBase {
         private final RequiredArg<String> apiKeyArg = this.withRequiredArg(
                 "key",
@@ -115,8 +121,9 @@ public class HycompanionCommand extends AbstractCommandCollection {
         }
     }
 
-    // ========== Status Subcommand ==========
+    // ========== 状态查询子命令 ==========
 
+    /** status子命令 - 显示插件版本、API密钥状态、连接状态、NPC计数等信息 */
     private class StatusCommand extends CommandBase {
         public StatusCommand() {
             super("status", "Show Hycompanion connection status");
@@ -148,8 +155,9 @@ public class HycompanionCommand extends AbstractCommandCollection {
         }
     }
 
-    // ========== Sync Subcommand ==========
+    // ========== NPC同步子命令 ==========
 
+    /** sync子命令 - 向后端发送同步请求，强制重新获取NPC数据 */
     private class SyncCommand extends CommandBase {
         public SyncCommand() {
             super("sync", "Force NPC sync from backend");
@@ -170,8 +178,9 @@ public class HycompanionCommand extends AbstractCommandCollection {
         }
     }
 
-    // ========== Rediscover Subcommand ==========
+    // ========== 实体重新发现子命令 ==========
 
+    /** rediscover子命令 - 重新扫描世界中的NPC实体并重新绑定实体引用 */
     private class RediscoverCommand extends CommandBase {
         public RediscoverCommand() {
             super("rediscover", "Re-scan world for NPC entities and rebind references");
@@ -227,8 +236,9 @@ public class HycompanionCommand extends AbstractCommandCollection {
         }
     }
 
-    // ========== List Subcommand ==========
+    // ========== NPC列表子命令 ==========
 
+    /** list子命令 - 列出所有已加载的NPC及其生成状态 */
     private class ListCommand extends CommandBase {
         public ListCommand() {
             super("list", "List all loaded NPCs");
@@ -266,8 +276,9 @@ public class HycompanionCommand extends AbstractCommandCollection {
         }
     }
 
-    // ========== Spawn Subcommand ==========
+    // ========== NPC生成子命令 ==========
 
+    /** spawn子命令 - 在玩家当前位置生成指定NPC实体 */
     private class SpawnCommand extends AbstractPlayerCommand {
         private final RequiredArg<String> npcIdArg = this.withRequiredArg(
                 "npc-id",
@@ -302,7 +313,7 @@ public class HycompanionCommand extends AbstractCommandCollection {
 
             NpcData npc = npcOpt.get();
 
-            // Get player position
+            // 获取玩家当前坐标作为NPC生成位置
             Vector3d playerPos = playerRef.getTransform().getPosition();
 
             Location spawnLocation = new Location(
@@ -330,8 +341,12 @@ public class HycompanionCommand extends AbstractCommandCollection {
         }
     }
 
-    // ========== Despawn Subcommand ==========
+    // ========== NPC移除子命令 ==========
 
+    /**
+     * despawn子命令 - 从世界中移除NPC实体
+     * 支持三种标识方式：UUID直接指定、外部ID/名称匹配、外部ID:nearest（最近的）
+     */
     private class DespawnCommand extends AbstractPlayerCommand {
         private final RequiredArg<String> npcIdArg = this.withRequiredArg(
                 "npc-id",
@@ -350,7 +365,7 @@ public class HycompanionCommand extends AbstractCommandCollection {
                 @Nonnull World world) {
             String identifier = context.get(npcIdArg);
 
-            // Check for :nearest suffix
+            // 检查是否使用了 :nearest 后缀（查找最近的NPC）
             String nearestExternalId = null;
             if (identifier != null && identifier.toLowerCase().endsWith(":nearest")) {
                 nearestExternalId = identifier.substring(0, identifier.length() - ":nearest".length());
@@ -359,7 +374,7 @@ public class HycompanionCommand extends AbstractCommandCollection {
             java.util.UUID targetUuid = null;
 
             if (nearestExternalId != null && !nearestExternalId.isEmpty()) {
-                // Find nearest NPC by external ID
+                // 根据外部ID查找距离玩家最近的已生成NPC
                 Vector3d playerPos = playerRef.getTransform().getPosition();
                 Location playerLocation = new Location(
                         playerPos.getX(), playerPos.getY(), playerPos.getZ(), world.getName());
@@ -378,7 +393,7 @@ public class HycompanionCommand extends AbstractCommandCollection {
                     return;
                 }
             } else {
-                // First, try to see if the identifier is a direct UUID of an instance
+                // 首先尝试将标识符解析为UUID，失败则按名称或外部ID查找
                 try {
                     targetUuid = java.util.UUID.fromString(identifier);
                 } catch (IllegalArgumentException e) {
@@ -427,8 +442,9 @@ public class HycompanionCommand extends AbstractCommandCollection {
         }
     }
 
-    // ========== TpHere Subcommand ==========
+    // ========== NPC传送到玩家位置子命令 ==========
 
+    /** tphere子命令 - 将指定NPC传送到玩家当前位置 */
     private class TpHereCommand extends AbstractPlayerCommand {
         private final RequiredArg<String> npcUuidArg = this.withRequiredArg(
                 "npc-uuid",
@@ -486,8 +502,9 @@ public class HycompanionCommand extends AbstractCommandCollection {
         }
     }
 
-    // ========== TpTo Subcommand ==========
+    // ========== 玩家传送到NPC位置子命令 ==========
 
+    /** tpto子命令 - 将玩家传送到指定NPC的位置 */
     private class TpToCommand extends AbstractPlayerCommand {
         private final RequiredArg<String> npcUuidArg = this.withRequiredArg(
                 "npc-uuid",
@@ -539,8 +556,9 @@ public class HycompanionCommand extends AbstractCommandCollection {
         }
     }
 
-    // ========== Help Subcommand ==========
+    // ========== 帮助子命令 ==========
 
+    /** help子命令 - 显示所有可用命令及其说明 */
     private class HelpCommand extends CommandBase {
         public HelpCommand() {
             super("help", "Show all Hycompanion commands");

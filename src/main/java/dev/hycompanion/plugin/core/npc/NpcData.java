@@ -7,38 +7,40 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * NPC data model - represents an NPC synced from the backend
- * 
- * @param id           Internal UUID (from backend database)
- * @param externalId   External ID used for identification (e.g.,
- *                     "merchant_bob")
- * @param entityUuid   In-game entity UUID (null if not spawned)
- * 
- * @param name         Display name shown in-game
- * @param personality  LLM personality prompt
- * @param greeting     Initial greeting message
- * @param alignment    D&D-style alignment (lawful_good, neutral, chaotic_evil,
- *                     etc.)
- * @param moralProfile Moral constraints for the NPC
- * @param location     Last known location (persisted locally)
- * @param entityUuid   In-game entity UUID (null if not spawned)
- * @param syncedAt     When this data was last synced
+ * NPC数据模型 - 表示从后端同步的NPC数据
+ *
+ * 包含NPC的基本信息、性格设定、行为配置等。
+ * 使用volatile字段确保多线程可见性（SocketManager线程更新，游戏线程读取）。
+ *
+ * @param id           内部UUID（来自后端数据库）
+ * @param externalId   用于标识的外部ID（如"merchant_bob"）
+ * @param name         游戏中显示的名称
+ * @param personality  LLM人格提示词
+ * @param greeting     初始问候语
+ * @param alignment    DnD风格的阵营（lawful_good、neutral、chaotic_evil等）
+ * @param moralProfile NPC的道德约束配置
+ * @param syncedAt     上次数据同步的时间
  */
 public class NpcData {
+    // 后端数据库中的内部ID（不可变）
     private final String id;
+    // 外部标识ID，如"merchant_bob"（不可变）
     private final String externalId;
-    // Volatile for thread visibility (SocketManager updates, Game thread reads)
-    private volatile String name;
-    private volatile String personality;
-    private volatile String greeting;
-    private volatile Number chatDistance;
-    private volatile boolean broadcastReplies;
-    private volatile String alignment;
-    private volatile MoralProfile moralProfile;
-    private volatile boolean invincible;
-    private volatile boolean preventKnockback;
-    private volatile Instant syncedAt;
+    // 以下字段使用volatile确保线程可见性（SocketManager线程更新，游戏线程读取）
+    private volatile String name;           // 游戏中显示的名称
+    private volatile String personality;    // LLM人格提示词
+    private volatile String greeting;       // 初始问候语
+    private volatile Number chatDistance;   // 聊天触发距离
+    private volatile boolean broadcastReplies; // 是否广播回复给附近玩家
+    private volatile String alignment;      // DnD风格阵营
+    private volatile MoralProfile moralProfile; // 道德约束配置
+    private volatile boolean invincible;    // 是否无敌
+    private volatile boolean preventKnockback; // 是否禁止击退
+    private volatile Instant syncedAt;      // 上次同步时间
 
+    /**
+     * 构造NPC数据对象
+     */
     public NpcData(String id, String externalId, String name, String personality, String greeting,
             Number chatDistance, boolean broadcastReplies, String alignment, MoralProfile moralProfile, boolean invincible,
             boolean preventKnockback, Instant syncedAt) {
@@ -56,8 +58,11 @@ public class NpcData {
         this.syncedAt = syncedAt;
     }
 
-    // Synchronized to ensure atomic updates of all fields together
-    // Synchronized to ensure atomic updates of all fields together
+    /**
+     * 从另一个NpcData对象更新当前对象的属性。
+     * 使用synchronized确保所有字段原子性更新。
+     * 仅当externalId相同时才执行更新，非空字段会覆盖当前值。
+     */
     public synchronized void updateFrom(NpcData other) {
         if (!this.externalId.equals(other.externalId))
             return;
@@ -130,7 +135,8 @@ public class NpcData {
     }
 
     /**
-     * Create NPC from sync payload
+     * 从后端同步数据创建NPC对象。
+     * 对alignment和moralProfile提供默认值。
      */
     public static NpcData fromSync(
             String id,
@@ -160,7 +166,7 @@ public class NpcData {
     }
 
     /**
-     * Create updated copy with sync timestamp
+     * 创建一个更新了同步时间戳的副本
      */
     public NpcData withSyncedAt(Instant newSyncedAt) {
         return new NpcData(
@@ -169,21 +175,21 @@ public class NpcData {
     }
 
     /**
-     * Moral profile for the NPC
-     * 
-     * @param ideals               Core beliefs that the NPC will not violate
-     * @param persuasionResistance How resistant to player manipulation (total,
-     *                             strong, medium, weak)
+     * NPC的道德约束配置
+     *
+     * @param ideals               NPC不会违背的核心信念列表
+     * @param persuasionResistance 对玩家操控的抵抗程度（total/strong/medium/weak）
      */
     public record MoralProfile(
             List<String> ideals,
             String persuasionResistance) {
+        /** 默认道德配置：在职责范围内提供帮助，强抵抗力 */
         public static final MoralProfile DEFAULT = new MoralProfile(
                 List.of("Be helpful within my role"),
                 "strong");
 
         /**
-         * Check if NPC is highly resistant to manipulation
+         * 检查NPC是否对操控有高抵抗力（total或strong级别）
          */
         public boolean isHighlyResistant() {
             return "total".equals(persuasionResistance) || "strong".equals(persuasionResistance);

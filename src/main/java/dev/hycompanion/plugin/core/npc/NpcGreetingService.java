@@ -13,15 +13,14 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Service to handle NPC greeting behavior when players approach for the first
- * time.
- * 
- * Tracks which players have been greeted by each NPC (since server start).
- * When a new player approaches an NPC that has a greeting configured:
- * 1. Rotates the NPC toward the player
- * 2. Sends the greeting message to the player
- * 
- * If an NPC has no greeting set (null or empty), it will not greet players.
+ * NPC问候服务 - 处理玩家首次接近NPC时的问候行为。
+ *
+ * 追踪每个NPC已问候过的玩家（自服务器启动以来）。
+ * 当新玩家接近配置了问候语的NPC时：
+ * 1. 将NPC转向玩家
+ * 2. 向玩家发送问候消息
+ *
+ * 如果NPC未设置问候语（null或空），则不会问候玩家。
  */
 public class NpcGreetingService {
 
@@ -30,15 +29,22 @@ public class NpcGreetingService {
     private final PluginConfig config;
     private final PluginLogger logger;
 
-    // Tracks which players have been greeted by each NPC: "npcInstanceId:playerId"
-    // -> true
+    // 追踪已问候的玩家记录，格式为"npcInstanceId:playerId"（线程安全集合）
     private final Set<String> greetedPlayers = ConcurrentHashMap.newKeySet();
 
+    // 定时检查任务的Future引用
     private ScheduledFuture<?> proximityCheckTask;
 
-    // Shutdown flag to prevent operations during server shutdown
+    // 关闭标志，防止服务器关闭期间执行操作
     private volatile boolean isShutdown = false;
 
+    /**
+     * 构造NPC问候服务
+     * @param hytaleAPI   Hytale服务器API接口
+     * @param npcManager  NPC管理器
+     * @param config      插件配置
+     * @param logger      日志记录器
+     */
     public NpcGreetingService(HytaleAPI hytaleAPI, NpcManager npcManager, PluginConfig config, PluginLogger logger) {
         this.hytaleAPI = hytaleAPI;
         this.npcManager = npcManager;
@@ -47,10 +53,11 @@ public class NpcGreetingService {
     }
 
     /**
-     * Start the periodic proximity check for greeting players.
-     * 
-     * @param scheduler  The scheduler to use for periodic checks
-     * @param intervalMs The interval between checks in milliseconds
+     * 启动定期的玩家接近检测任务。
+     * 按固定间隔检查玩家是否接近NPC，并触发问候。
+     *
+     * @param scheduler  用于定时调度的执行器
+     * @param intervalMs 检查间隔（毫秒）
      */
     public void startProximityChecks(ScheduledExecutorService scheduler, long intervalMs) {
 
@@ -65,7 +72,8 @@ public class NpcGreetingService {
     }
 
     /**
-     * Stop the proximity check task.
+     * 停止接近检测任务。
+     * 设置关闭标志并取消定时任务。
      */
     public void stopProximityChecks() {
         long startTime = System.currentTimeMillis();
@@ -86,8 +94,8 @@ public class NpcGreetingService {
     }
 
     /**
-     * Clear all greeted player records.
-     * Call this on server restart/reload if needed.
+     * 清除所有已问候玩家的记录。
+     * 在服务器重启/重载时调用。
      */
     public void clearGreetedPlayers() {
         greetedPlayers.clear();
@@ -95,34 +103,34 @@ public class NpcGreetingService {
     }
 
     /**
-     * Remove all greeted records for a specific NPC.
+     * 清除指定NPC的所有已问候记录。
      */
     public void clearGreetedPlayersForNpc(UUID npcInstanceId) {
         greetedPlayers.removeIf(key -> key.startsWith(npcInstanceId.toString() + ":"));
     }
 
     /**
-     * Check if a player has been greeted by an NPC.
+     * 检查玩家是否已被指定NPC问候过。
      */
     public boolean hasBeenGreeted(UUID npcInstanceId, String playerId) {
         return greetedPlayers.contains(npcInstanceId.toString() + ":" + playerId);
     }
 
     /**
-     * Mark a player as greeted by an NPC.
+     * 标记玩家已被指定NPC问候过。
      */
     public void markAsGreeted(UUID npcInstanceId, String playerId) {
         greetedPlayers.add(npcInstanceId.toString() + ":" + playerId);
     }
 
     /**
-     * Periodic check for players near NPCs.
-     * Runs on a scheduled thread.
+     * 定期检查玩家是否接近NPC。
+     * 在调度线程上运行，遍历所有NPC实例并检查附近玩家。
      */
     private void checkPlayerProximity() {
 
 
-        // [Shutdown Fix] Check shutdown flag first
+        // 【关闭修复】优先检查关闭标志，避免服务器关闭期间执行操作
         if (isShutdown || Thread.currentThread().isInterrupted()) {
             logger.debug("Proximity check interrupted, skipping");
             return;
@@ -135,15 +143,15 @@ public class NpcGreetingService {
             return; // Greeting disabled
         }
 
-        // [Shutdown Fix] If no players are online, don't waste resources checking NPCs
-        // This prevents blocking operations during server shutdown
+        // 【关闭修复】如果没有在线玩家，不浪费资源检查NPC
+        // 这也可以防止服务器关闭期间的阻塞操作
         var onlinePlayers = hytaleAPI.getOnlinePlayers();
         if (onlinePlayers.isEmpty()) {
             //logger.debug("No online players, skipping proximity check");
             return;
         }
 
-        // Check each spawned NPC
+        // 遍历每个已生成的NPC，检查附近是否有未问候过的玩家
         for (NpcInstanceData npcInstanceData : hytaleAPI.getNpcInstances()) {
 
             if (Thread.currentThread().isInterrupted()) {
@@ -152,32 +160,32 @@ public class NpcGreetingService {
             }
 
             NpcData npc = npcInstanceData.npcData();
-            // Skip NPCs without greeting
+            // 跳过没有配置问候语的NPC
             if (!hasGreeting(npc)) {
                 logger.debug("NPC [" + npcInstanceData.entityUuid() + "] has no greeting, skipping");
                 continue;
             }
 
-            // Skip NPCs not spawned or without location
+            // 跳过未生成或没有位置信息的NPC
             if (!npcInstanceData.isSpawned()) {
                 logger.debug("NPC [" + npcInstanceData.entityUuid() + "] is not spawned, skipping");
                 continue;
             }
 
-            // Get live location
+            // 获取NPC的实时位置
             var npcLoc = hytaleAPI.getNpcInstanceLocation(npcInstanceData.entityUuid());
             if (npcLoc.isEmpty()) {
                 logger.debug("NPC [" + npcInstanceData.entityUuid() + "] has no location, skipping");
                 continue;
             }
 
-            // Get players near this NPC
+            // 获取该NPC附近的玩家列表
             var nearbyPlayers = hytaleAPI.getNearbyPlayers(npcLoc.get(), greetingRange);
 
             for (GamePlayer player : nearbyPlayers) {
-                // Check if this player has been greeted by this NPC
+                // 检查该玩家是否已被此NPC问候过
                 if (!hasBeenGreeted(npcInstanceData.entityUuid(), player.id())) {
-                    // First time encounter - greet the player!
+                    // 首次相遇 - 向玩家发出问候！
                     greetPlayer(npcInstanceData.entityUuid(), player);
                 }
             }
@@ -185,36 +193,35 @@ public class NpcGreetingService {
     }
 
     /**
-     * Check if an NPC has a greeting configured.
+     * 检查NPC是否配置了问候语。
      */
     private boolean hasGreeting(NpcData npc) {
         return npc.greeting() != null && !npc.greeting().isEmpty();
     }
 
     /**
-     * Perform the greeting action for a player.
-     * 
-     * 1. Rotate NPC toward player
-     * 2. Send greeting message
-     * 3. Mark as greeted
+     * 对玩家执行问候操作。
+     * 1. 将NPC转向玩家
+     * 2. 发送问候消息
+     * 3. 标记为已问候
      */
     private void greetPlayer(UUID npcInstanceId, GamePlayer player) {
         logger.debug("Greeting player [" + player.name() + "] with NPC [" + npcInstanceId + "]");
         String playerId = player.id();
         NpcData npc = hytaleAPI.getNpcInstance(npcInstanceId).npcData();
 
-        // Mark as greeted immediately to prevent duplicate greetings
+        // 立即标记为已问候，防止重复问候
         markAsGreeted(npcInstanceId, playerId);
 
-        // Rotate toward the player
+        // 将NPC转向玩家方向
         if (player.location() != null) {
             hytaleAPI.rotateNpcInstanceToward(npcInstanceId, player.location());
         }
 
-        // Format and send greeting message
+        // 格式化并发送问候消息
         String greeting = npc.greeting();
         String prefix = config.gameplay().messagePrefix();
-        // Remove legacy color codes
+        // 移除旧版颜色代码
         prefix = prefix.replaceAll("[§&][0-9a-fk-orA-FK-OR]", "");
         String formattedMessage = prefix + npc.name() + ": " + greeting;
 

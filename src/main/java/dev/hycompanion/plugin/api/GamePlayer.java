@@ -3,12 +3,12 @@ package dev.hycompanion.plugin.api;
 import java.util.UUID;
 
 /**
- * Represents a player in the game world
- * 
- * @param id       Unique player identifier (UUID or platform ID)
- * @param name     Display name
- * @param uuid     Player's UUID
- * @param location Current location
+ * 表示游戏世界中的一个玩家
+ *
+ * @param id       玩家唯一标识符（UUID 或平台 ID）
+ * @param name     显示名称
+ * @param uuid     玩家的 UUID
+ * @param location 当前位置
  */
 public record GamePlayer(
         String id,
@@ -16,33 +16,33 @@ public record GamePlayer(
         UUID uuid,
         Location location) {
     /**
-     * Create a GamePlayer with string ID
+     * 使用字符串 ID 创建 GamePlayer 实例
      */
     public static GamePlayer of(String id, String name, Location location) {
         return new GamePlayer(id, name, parseUUID(id), location);
     }
 
     /**
-     * Create a GamePlayer with UUID
+     * 使用 UUID 创建 GamePlayer 实例
      */
     public static GamePlayer of(UUID uuid, String name, Location location) {
         return new GamePlayer(uuid.toString(), name, uuid, location);
     }
 
     /**
-     * Parse UUID from string, or generate deterministic one from ID
+     * 从字符串解析 UUID，如果格式无效则根据 ID 生成确定性的 UUID
      */
     private static UUID parseUUID(String id) {
         try {
             return UUID.fromString(id);
         } catch (IllegalArgumentException e) {
-            // Generate deterministic UUID from ID
+            // 根据 ID 字符串生成确定性的 UUID
             return UUID.nameUUIDFromBytes(id.getBytes());
         }
     }
 
     /**
-     * Check if player is within range of a location
+     * 检查玩家是否在某位置的指定范围内
      */
     public boolean isWithinRange(Location other, double range) {
         return location != null && location.distanceTo(other) <= range;

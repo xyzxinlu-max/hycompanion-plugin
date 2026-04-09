@@ -13,59 +13,48 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Central manager for plugin integrations.
- * 
- * This class manages optional plugin dependencies for Hycompanion.
- * It provides a clean interface to detect and interact with other plugins
- * without tightly coupling the code to those plugins.
- * 
- * Supported integrations:
- * - SpeechBubbles: Display floating speech bubbles above NPCs
- * 
- * Usage:
- * <pre>
- * PluginIntegrationManager integrationManager = new PluginIntegrationManager(logger);
- * 
- * // Show a speech bubble
- * integrationManager.getSpeechBubbles().showBubble(npcUuid, playerUuid, "Hello!", 5000);
- * </pre>
+ * 插件集成管理中心
+ *
+ * 管理Hycompanion的可选插件依赖，提供统一接口来检测和调用其他插件，
+ * 避免代码与这些插件产生紧耦合。
+ *
+ * 目前支持的集成：
+ * - SpeechBubbles：在NPC头顶显示浮动对话气泡
  */
 public class PluginIntegrationManager {
-    
+
     private final PluginLogger logger;
     private final PluginManager pluginManager;
-    
-    // Cached integrations
+
+    /** 已缓存的集成实例，按插件标识符索引 */
     private final Map<PluginIdentifier, OptionalPluginIntegration> integrations;
-    
-    // Known plugin identifiers
+
+    /** 已知的插件标识符常量 */
     public static final PluginIdentifier SPEECH_BUBBLES = new PluginIdentifier("dev.hycompanion", "SpeechBubbles");
-    
+
     /**
-     * Create a new plugin integration manager
-     * 
-     * @param logger The plugin logger
+     * 创建插件集成管理器并初始化所有集成
      */
     public PluginIntegrationManager(@Nonnull PluginLogger logger) {
         this.logger = logger;
         this.pluginManager = HytaleServer.get().getPluginManager();
         this.integrations = new HashMap<>();
-        
-        // Initialize all integrations
+
+        // 初始化所有集成
         initializeIntegrations();
     }
-    
+
     /**
-     * Initialize all plugin integrations
+     * 初始化所有插件集成，检测可用性并记录统计信息
      */
     private void initializeIntegrations() {
         logger.info("Initializing plugin integrations...");
-        
-        // Initialize Speech Bubbles integration
+
+        // 初始化对话气泡插件集成
         SpeechBubbleIntegration speechBubbleIntegration = new SpeechBubbleIntegration(logger, pluginManager);
         integrations.put(SPEECH_BUBBLES, speechBubbleIntegration);
-        
-        // Log summary
+
+        // 输出可用集成数量的统计摘要
         long availableCount = integrations.values().stream()
             .filter(OptionalPluginIntegration::isAvailable)
             .count();
@@ -74,9 +63,7 @@ public class PluginIntegrationManager {
     }
     
     /**
-     * Get the Speech Bubbles integration
-     * 
-     * @return The SpeechBubbleIntegration instance (never null)
+     * 获取对话气泡集成实例（始终非空，即使插件不可用也返回实例）
      */
     @Nonnull
     public SpeechBubbleIntegration getSpeechBubbles() {
@@ -84,10 +71,7 @@ public class PluginIntegrationManager {
     }
     
     /**
-     * Check if a specific plugin is available and enabled
-     * 
-     * @param pluginId The plugin identifier
-     * @return true if the plugin is available and enabled
+     * 检查指定插件是否可用且已启用
      */
     public boolean isPluginAvailable(@Nonnull PluginIdentifier pluginId) {
         OptionalPluginIntegration integration = integrations.get(pluginId);
@@ -95,10 +79,7 @@ public class PluginIntegrationManager {
     }
     
     /**
-     * Get a plugin by its identifier
-     * 
-     * @param pluginId The plugin identifier
-     * @return The plugin base, or null if not found
+     * 根据标识符获取插件实例，未找到时返回null
      */
     @Nullable
     public PluginBase getPlugin(@Nonnull PluginIdentifier pluginId) {
@@ -110,7 +91,7 @@ public class PluginIntegrationManager {
     }
     
     /**
-     * Shutdown all integrations
+     * 关闭所有集成，释放资源
      */
     public void shutdown() {
         logger.debug("Shutting down plugin integrations...");
@@ -127,19 +108,14 @@ public class PluginIntegrationManager {
     }
     
     /**
-     * Base interface for optional plugin integrations
+     * 可选插件集成的基础接口
+     * 所有集成实现都需要提供可用性检查和关闭清理方法
      */
     public interface OptionalPluginIntegration {
-        /**
-         * Check if the plugin is available
-         * 
-         * @return true if available and ready to use
-         */
+        /** 检查插件是否可用且准备就绪 */
         boolean isAvailable();
-        
-        /**
-         * Shutdown the integration
-         */
+
+        /** 关闭集成并清理资源 */
         void shutdown();
     }
 }

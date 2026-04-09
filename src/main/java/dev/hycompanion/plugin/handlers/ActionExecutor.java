@@ -16,22 +16,33 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Executes MCP tool actions received from the backend
- * 
- * All NPC output (text messages, emotes, trade, quest offers) comes through
- * here
- * as results of MCP tool calls made by the LLM.
- * 
+ * 执行从后端接收到的 MCP 工具动作
+ *
+ * 所有 NPC 的输出（文本消息、表情动作、交易、任务等）都通过此类执行，
+ * 这些输出是 LLM 发起 MCP 工具调用的结果。
+ *
  * @see dev.hycompanion.plugin.network.SocketManager
  */
 public class ActionExecutor {
 
+    /** Hytale 游戏 API，用于操作游戏内实体和世界 */
     private final HytaleAPI hytaleAPI;
+    /** NPC 管理器，负责 NPC 数据的注册与查询 */
     private final NpcManager npcManager;
+    /** 日志记录器 */
     private final PluginLogger logger;
+    /** 插件配置（可热重载） */
     private PluginConfig config;
+    /** 聊天处理器，用于在动作完成后通知队列推进 */
     private ChatHandler chatHandler;
 
+    /**
+     * 构造函数 - 初始化动作执行器
+     * @param hytaleAPI 游戏 API 接口
+     * @param npcManager NPC 管理器
+     * @param logger 日志记录器
+     * @param config 插件配置
+     */
     public ActionExecutor(HytaleAPI hytaleAPI, NpcManager npcManager, PluginLogger logger, PluginConfig config) {
         this.hytaleAPI = hytaleAPI;
         this.npcManager = npcManager;
@@ -40,45 +51,37 @@ public class ActionExecutor {
     }
 
     /**
-     * Set updated config (for reload)
+     * 设置更新后的配置（用于热重载）
      */
     public void setConfig(PluginConfig config) {
         this.config = config;
     }
 
     /**
-     * Set ChatHandler to notify on action completion
+     * 设置聊天处理器，以便在动作执行完成后通知其推进消息队列
      */
     public void setChatHandler(ChatHandler chatHandler) {
         this.chatHandler = chatHandler;
     }
 
     /**
-     * Execute an action received from backend
-     * 
-     * @param npcInstanceId NPC instance UUID
-     * @param playerId      Target player ID
-     * @param action        Action type (say, emote, open_trade, give_quest,
-     *                      move_to)
-     * @param params        Action parameters
-     */
-    /**
-     * Execute an action received from backend with optional acknowledgement
-     * 
-     * @param npcInstanceId NPC instance UUID
-     * @param playerId      Target player ID
-     * @param action        Action type
-     * @param params        Action parameters
-     * @param ack           Optional acknowledgment callback
+     * 执行从后端接收到的动作（带可选的确认回调）
+     *
+     * 这是动作分发的核心方法。根据动作类型（say、emote、move_to 等）
+     * 将请求路由到对应的执行方法。
+     *
+     * @param npcInstanceId NPC 实例的 UUID
+     * @param playerId      目标玩家 ID
+     * @param action        动作类型（say, emote, open_trade, give_quest, move_to 等）
+     * @param params        动作参数（JSON 格式）
+     * @param ack           可选的 Socket.IO 确认回调
      */
     public void execute(UUID npcInstanceId, String playerId, String action, JSONObject params,
             io.socket.client.Ack ack) {
-        // We do NOT hide thinking indicator here anymore.
-        // It is managed by ChatHandler based on the queue state.
+        // 思考指示器不在这里隐藏，由 ChatHandler 根据队列状态统一管理
 
-        // Handle error_message action first - it doesn't require NPC instance
-        // This ensures error messages are always sent to the player even if NPC is not
-        // found
+        // 优先处理 error_message 动作 - 它不需要 NPC 实例
+        // 确保即使找不到 NPC，错误消息也能发送给玩家
         if ("error_message".equals(action)) {
             try {
                 executeErrorMessage(npcInstanceId, playerId, params);
@@ -90,87 +93,91 @@ public class ActionExecutor {
                 if (ack != null)
                     ack.call("{\"error\": \"Exception: " + e.getMessage() + "\"}");
             }
-            // Don't notify chatHandler for error messages - they don't advance the queue
+            // 错误消息不推进聊天队列
             return;
         }
 
-        // Resolve NPC Instance
+        // 解析 NPC 实例数据
         NpcInstanceData npcInstanceData = hytaleAPI.getNpcInstance(npcInstanceId);
         if (npcInstanceData == null) {
+            // NPC 未在注册表中找到（可能是 external_id 与 id 不匹配）
             logger.warn("Action for unknown NPC: npcInstanceId=" + npcInstanceId + ", action=" + action +
                     ", playerId=" + playerId + " (NPC not in registry - possible external_id vs id mismatch)");
-            // Still try to execute basic actions even without NPC registration
             if (ack != null) {
                 ack.call("{\"error\": \"NPC instance not found\"}");
             }
-            return; // Don't proceed if NPC is missing for these actions
+            return;
         }
 
-        // Dispatch action - entity-manipulating actions will handle failures gracefully
+        // 根据动作类型分发执行 - 操作实体的动作会优雅地处理失败
         try {
             switch (action) {
-                case "say" -> {
+                // === 基础交互动作 ===
+                case "say" -> {                          // 发送文本消息给玩家
                     executeSay(npcInstanceData, playerId, params);
                     if (ack != null)
                         ack.call("{\"status\": \"success\"}");
                 }
-                case "emote" -> {
+                case "emote" -> {                        // 播放 NPC 表情/动画
                     executeEmote(npcInstanceData, params);
                     if (ack != null)
                         ack.call("{\"status\": \"success\"}");
                 }
-                case "open_trade" -> {
+                case "open_trade" -> {                   // 打开交易界面
                     executeOpenTrade(npcInstanceData, playerId);
                     if (ack != null)
                         ack.call("{\"status\": \"success\"}");
                 }
-                case "give_quest" -> {
+                case "give_quest" -> {                   // 给予玩家任务
                     executeGiveQuest(npcInstanceData, playerId, params);
                     if (ack != null)
                         ack.call("{\"status\": \"success\"}");
                 }
-                case "move_to" -> {
+                // === 移动与跟随动作 ===
+                case "move_to" -> {                      // 移动 NPC 到指定位置
                     executeMoveTo(npcInstanceData, params, ack);
                 }
-                case "follow_target" -> {
+                case "follow_target" -> {                // 跟随目标玩家
                     executeFollowTarget(npcInstanceData, params);
                     if (ack != null)
                         ack.call("{\"status\": \"success\"}");
                 }
-                case "stop_following" -> {
+                case "stop_following" -> {               // 停止跟随
                     executeStopFollowing(npcInstanceData);
                     if (ack != null)
                         ack.call("{\"status\": \"success\"}");
                 }
-                case "start_attacking" -> {
+                // === 战斗动作 ===
+                case "start_attacking" -> {              // 开始攻击目标
                     executeStartAttacking(npcInstanceData, params);
                     if (ack != null)
                         ack.call("{\"status\": \"success\"}");
                 }
-                case "stop_attacking" -> {
+                case "stop_attacking" -> {               // 停止攻击
                     executeStopAttacking(npcInstanceData);
                     if (ack != null)
                         ack.call("{\"status\": \"success\"}");
                 }
-                case "find_block" -> executeFindBlock(npcInstanceData, params, ack);
-                case "scan_blocks" -> executeScanBlocks(npcInstanceData, params, ack);
-                case "scan_entities" -> executeScanEntities(npcInstanceData, params, ack);
-                // case "find_entity" -> executeFindEntity(npcInstanceData, params, ack); //
-                // Deprecated
-                case "get_current_position" -> executeGetCurrentPosition(npcInstanceData, ack);
-                case "wait" -> executeWait(npcInstanceData, params, ack);
-                case "teleport_player" -> executeTeleportPlayer(npcInstanceData, playerId, params, ack);
-                // Inventory management actions
-                case "equip_item" -> executeEquipItem(npcInstanceData, params, ack);
-                case "break_block" -> executeBreakBlock(npcInstanceData, params, ack);
-                case "pickup_item" -> executePickupItem(npcInstanceData, params, ack);
-                case "use_held_item" -> executeUseHeldItem(npcInstanceData, params, ack);
-                case "drop_item" -> executeDropItem(npcInstanceData, params, ack);
-                case "get_inventory" -> executeGetInventory(npcInstanceData, params, ack);
-                case "unequip_item" -> executeUnequipItem(npcInstanceData, params, ack);
-                case "get_container_inventory" -> executeGetContainerInventory(npcInstanceData, params, ack);
-                case "store_item_in_container" -> executeStoreItemInContainer(npcInstanceData, params, ack);
-                case "take_item_from_container" -> executeTakeItemFromContainer(npcInstanceData, params, ack);
+                // === 感知/探测动作 ===
+                case "find_block" -> executeFindBlock(npcInstanceData, params, ack);           // 搜索附近方块
+                case "scan_blocks" -> executeScanBlocks(npcInstanceData, params, ack);         // 扫描周围方块类型
+                case "scan_entities" -> executeScanEntities(npcInstanceData, params, ack);     // 扫描周围实体
+                // case "find_entity" -> executeFindEntity(npcInstanceData, params, ack);      // 已弃用
+                case "get_current_position" -> executeGetCurrentPosition(npcInstanceData, ack); // 获取 NPC 当前位置
+                case "wait" -> executeWait(npcInstanceData, params, ack);                      // 等待指定时间
+                case "teleport_player" -> executeTeleportPlayer(npcInstanceData, playerId, params, ack); // 传送玩家
+                // === 物品栏管理动作 ===
+                case "equip_item" -> executeEquipItem(npcInstanceData, params, ack);           // 装备物品
+                case "break_block" -> executeBreakBlock(npcInstanceData, params, ack);         // 破坏方块
+                case "pickup_item" -> executePickupItem(npcInstanceData, params, ack);         // 拾取掉落物
+                case "use_held_item" -> executeUseHeldItem(npcInstanceData, params, ack);      // 使用手持物品
+                case "drop_item" -> executeDropItem(npcInstanceData, params, ack);             // 丢弃物品
+                case "get_inventory" -> executeGetInventory(npcInstanceData, params, ack);     // 获取物品栏内容
+                case "unequip_item" -> executeUnequipItem(npcInstanceData, params, ack);       // 卸下装备
+                // === 容器操作动作 ===
+                case "get_container_inventory" -> executeGetContainerInventory(npcInstanceData, params, ack);     // 获取容器内容
+                case "store_item_in_container" -> executeStoreItemInContainer(npcInstanceData, params, ack);      // 存入物品到容器
+                case "take_item_from_container" -> executeTakeItemFromContainer(npcInstanceData, params, ack);    // 从容器取出物品
                 default -> {
                     logger.warn("Unknown action received: " + action);
                     if (ack != null)
@@ -185,18 +192,60 @@ public class ActionExecutor {
             }
         }
 
-        // Notify ChatHandler that an action occurred, so it can advance the queue
+        // 通知 ChatHandler 动作已完成，以便推进消息队列中的下一条请求
         if (chatHandler != null) {
             chatHandler.onNpcAction(npcInstanceId);
         }
     }
 
+    /**
+     * 执行动作的简化重载（无确认回调）
+     */
     public void execute(UUID npcInstanceId, String playerId, String action, JSONObject params) {
         execute(npcInstanceId, playerId, action, params, null);
     }
 
     /**
-     * FIND_BLOCK - Search for a block by tag near the NPC
+     * 执行感知查询 —— 不推进聊天队列
+     * 用于后端在 Gemini function calling 循环中请求真实游戏数据的场景，
+     * 此时 NPC 仍在"思考中"，不应触发 chatHandler.onNpcAction()
+     */
+    public void executeQuery(UUID npcInstanceId, String playerId, String action, JSONObject params,
+            io.socket.client.Ack ack) {
+        NpcInstanceData npcInstanceData = hytaleAPI.getNpcInstance(npcInstanceId);
+        if (npcInstanceData == null) {
+            logger.warn("[Query] NPC instance not found: " + npcInstanceId);
+            if (ack != null) ack.call("{\"error\": \"NPC instance not found\"}");
+            return;
+        }
+
+        // 确保 params 不为 null（某些感知方法会检查 params == null 并直接返回）
+        if (params == null) params = new JSONObject();
+
+        try {
+            switch (action) {
+                case "scan_blocks" -> executeScanBlocks(npcInstanceData, params, ack);
+                case "find_block" -> executeFindBlock(npcInstanceData, params, ack);
+                case "scan_entities" -> executeScanEntities(npcInstanceData, params, ack);
+                case "get_current_position" -> executeGetCurrentPosition(npcInstanceData, ack);
+                case "get_inventory" -> executeGetInventory(npcInstanceData, params, ack);
+                case "get_container_inventory" -> executeGetContainerInventory(npcInstanceData, params, ack);
+                default -> {
+                    logger.warn("[Query] Unsupported query action: " + action);
+                    if (ack != null) ack.call("{\"error\": \"Unsupported query: " + action + "\"}");
+                }
+            }
+        } catch (Exception e) {
+            logger.error("[Query] Failed to execute query '" + action + "'", e);
+            Sentry.captureException(e);
+            if (ack != null) ack.call("{\"error\": \"Exception: " + e.getMessage() + "\"}");
+        }
+        // 注意：不调用 chatHandler.onNpcAction() —— 查询不推进聊天队列
+    }
+
+    /**
+     * 搜索方块 - 按标签在 NPC 附近搜索指定方块
+     * 异步执行，通过 ack 回调返回搜索结果
      */
     private void executeFindBlock(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (params == null || ack == null)
@@ -225,8 +274,7 @@ public class ActionExecutor {
     }
 
     /**
-     * SCAN_BLOCKS - Scan surroundings and return all unique block types with
-     * nearest coordinates
+     * 扫描方块 - 扫描周围环境，返回所有唯一方块类型及其最近坐标
      */
     private void executeScanBlocks(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (params == null || ack == null)
@@ -250,7 +298,7 @@ public class ActionExecutor {
     }
 
     /**
-     * SCAN_ENTITIES - Scan surroundings and return all entities with their details
+     * 扫描实体 - 扫描周围环境，返回所有实体及其详细信息
      */
     private void executeScanEntities(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (params == null || ack == null)
@@ -273,7 +321,7 @@ public class ActionExecutor {
     }
 
     /**
-     * FIND_ENTITY - Search for an entity by type/name near the NPC (Deprecated)
+     * 搜索实体 - 按类型/名称在 NPC 附近搜索实体（已弃用）
      */
     private void executeFindEntity(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (params == null || ack == null)
@@ -297,16 +345,14 @@ public class ActionExecutor {
     }
 
     /**
-     * SAY - Send text message to player(s)
-     * This is the primary way NPCs communicate
-     * 
-     * If playerId is null or empty, broadcasts to all nearby players.
-     * If params.broadcast is true, broadcasts to all nearby players within chat
-     * distance.
-     * 
-     * NOTE: Chat bubbles above NPC heads are NOT currently supported in Hytale's
-     * plugin API. This feature would require custom UI implementation which is
-     * out of scope for the current API. Messages are sent to the player's chat.
+     * 发送消息 - 向玩家发送文本消息
+     * 这是 NPC 与玩家沟通的主要方式。
+     *
+     * 如果 playerId 为空，则广播给所有附近的玩家。
+     * 如果 params.broadcast 为 true，则在聊天距离内广播给所有附近玩家。
+     *
+     * 注意：Hytale 插件 API 暂不支持 NPC 头顶聊天气泡，
+     * 消息通过玩家聊天栏发送。
      */
     private void executeSay(NpcInstanceData npcInstanceData, String playerId, JSONObject params) {
 
@@ -322,16 +368,16 @@ public class ActionExecutor {
             return;
         }
 
-        // Check if broadcasting is enabled (from params or NPC config)
+        // 检查是否启用广播（来自参数或 NPC 配置）
         boolean broadcastFromParams = params != null && params.optBoolean("broadcast", false);
         NpcData npc = npcInstanceData.npcData();
         boolean broadcastFromConfig = npc != null && npc.broadcastReplies();
         boolean shouldBroadcast = broadcastFromParams || broadcastFromConfig;
 
-        // Check if playerId is provided
+        // 检查是否提供了目标玩家 ID
         boolean hasPlayerId = playerId != null && !playerId.isEmpty();
 
-        // Resolve target player name for message formatting
+        // 解析目标玩家名称用于消息格式化
         String targetPlayerName = "Player";
         if (hasPlayerId) {
             Optional<GamePlayer> playerOpt = hytaleAPI.getPlayer(playerId);
@@ -340,21 +386,20 @@ public class ActionExecutor {
             }
         }
 
-        // Format message with NPC name and prefix
+        // 格式化消息，添加 NPC 名称前缀
         String npcName = npc != null ? npc.name() : npcInstanceData.entityUuid().toString();
-        // New format: [NPC] Name to PlayerName: Message
+        // 格式示例: [NPC] 战士 to Steve: 你好！
         String formattedMessage = formatNpcMessage(npcName, message, targetPlayerName);
 
         if (shouldBroadcast) {
-            // Broadcast to all nearby players using NPC's chat distance
+            // 使用 NPC 的聊天距离广播给所有附近玩家
             Optional<Location> npcLoc = hytaleAPI.getNpcInstanceLocation(npcInstanceData.entityUuid());
             if (npcLoc.isEmpty()) {
                 logger.warn("Cannot broadcast message - NPC location unknown: " + npcInstanceData.entityUuid());
                 return;
             }
 
-            // Use NPC's chat distance for broadcast range, fallback to greeting range from
-            // config
+            // 使用 NPC 的聊天距离作为广播范围，若未设置则回退到配置中的问候范围
             Number chatDistance = npc != null ? npc.chatDistance() : null;
             double broadcastRange = chatDistance != null ? chatDistance.doubleValue()
                     : config.gameplay().greetingRange();
@@ -367,12 +412,12 @@ public class ActionExecutor {
                 return;
             }
 
-            // Get player IDs for broadcasting
+            // 获取附近玩家 ID 列表
             java.util.List<String> playerIds = nearbyPlayers.stream()
                     .map(dev.hycompanion.plugin.api.GamePlayer::id)
                     .toList();
 
-            // Broadcast to all nearby players
+            // 向所有附近玩家广播消息
             hytaleAPI.broadcastNpcMessage(npcInstanceData.entityUuid(), playerIds, formattedMessage, message);
 
             if (config.logging().logActions()) {
@@ -380,7 +425,7 @@ public class ActionExecutor {
                         nearbyPlayers.size() + " players (range: " + broadcastRange + "): " + message);
             }
         } else if (hasPlayerId) {
-            // Rotate NPC toward the specific player when responding
+            // 回复时将 NPC 转向目标玩家
             java.util.concurrent.CompletableFuture.runAsync(() -> {
                 try {
                     hytaleAPI.getPlayer(playerId).ifPresent(player -> {
@@ -390,11 +435,11 @@ public class ActionExecutor {
                     });
                 } catch (Exception e) {
                     Sentry.captureException(e);
-                    // Ignore - rotation is optional
+                    // 忽略 - 旋转是可选操作
                 }
             });
 
-            // Send to specific player only
+            // 仅发送给指定玩家
             hytaleAPI.sendNpcMessage(npcInstanceData.entityUuid(), playerId, formattedMessage, message);
 
             if (config.logging().logActions()) {
@@ -403,18 +448,17 @@ public class ActionExecutor {
                                 + ") says to [" + playerId + "]: " + message);
             }
         } else {
-            // No specific player and no broadcast - just log a warning
+            // 没有指定玩家且未启用广播 - 记录警告
             logger.warn("Say action with no playerId and broadcast disabled for NPC: " + npcInstanceData.entityUuid());
         }
     }
 
     /**
-     * EMOTE - Play animation on NPC
-     * 
-     * The backend sends the actual animation name (e.g., "Sit", "Howl", "Greet")
-     * based on what's available for this NPC's model.
-     * 
-     * Emotes are only played when the NPC is idle (not following or attacking).
+     * 播放表情/动画 - 在 NPC 上播放指定动画
+     *
+     * 后端发送实际的动画名称（如 "Sit"、"Howl"、"Greet"），
+     * 基于该 NPC 模型可用的动画。
+     * 仅在 NPC 空闲时（未跟随或攻击）播放表情。
      */
     private void executeEmote(NpcInstanceData npcInstanceData, JSONObject params) {
         if (npcInstanceData == null)
@@ -426,20 +470,20 @@ public class ActionExecutor {
             return;
         }
 
-        // Don't play emotes while the NPC is busy (following or attacking)
+        // NPC 忙碌时（跟随/攻击中）不播放表情
         if (hytaleAPI.isNpcBusy(npcInstanceId)) {
             logger.debug("Skipping emote for NPC " + npcInstanceId + " - NPC is busy (following/attacking)");
             return;
         }
 
-        // The 'animation' parameter contains the actual animation name from the model
-        // Falls back to 'emotion' for backwards compatibility
+        // 'animation' 参数包含模型中的实际动画名称
+        // 向后兼容：回退到 'emotion' 参数
         String animationName = params != null
                 ? params.optString("animation", params.optString("emotion", "Idle"))
                 : "Idle";
 
-        // Pass the animation name directly - no mapping needed
-        // The animation name should match a key from the model's AnimationSets
+        // 直接传递动画名称 - 无需映射
+        // 动画名称应与模型的 AnimationSets 中的键匹配
         hytaleAPI.triggerNpcEmote(npcInstanceId, animationName);
 
         if (config.logging().logActions()) {
@@ -448,7 +492,7 @@ public class ActionExecutor {
     }
 
     /**
-     * OPEN_TRADE - Open trade interface between NPC and player
+     * 打开交易 - 打开 NPC 与玩家之间的交易界面
      */
     private void executeOpenTrade(NpcInstanceData npcInstanceData, String playerId) {
         if (npcInstanceData == null)
@@ -462,7 +506,7 @@ public class ActionExecutor {
     }
 
     /**
-     * GIVE_QUEST - Offer a quest to the player
+     * 给予任务 - 向玩家提供一个任务
      */
     private void executeGiveQuest(NpcInstanceData npcInstanceData, String playerId, JSONObject params) {
         if (npcInstanceData == null)
@@ -484,7 +528,8 @@ public class ActionExecutor {
     }
 
     /**
-     * MOVE_TO - Move NPC to a location
+     * 移动至 - 将 NPC 移动到指定坐标位置
+     * 异步执行，通过 ack 回调返回移动结果（成功/卡住/中断）
      */
     private void executeMoveTo(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
@@ -510,7 +555,7 @@ public class ActionExecutor {
             if (ack != null) {
                 org.json.JSONObject response = new org.json.JSONObject();
 
-                // Map result status to response format expected by backend
+                // 将移动结果状态映射为后端期望的响应格式
                 String status = result.status();
                 if ("success".equals(status)) {
                     response.put("success", true);
@@ -541,39 +586,38 @@ public class ActionExecutor {
     }
 
     /**
-     * ERROR_MESSAGE - Display an error message in red to the player
-     * Used when backend encounters errors (like LLM failures)
+     * 错误消息 - 以红色文字向玩家显示错误信息
+     * 当后端遇到错误时使用（如 LLM 调用失败）
      */
     private void executeErrorMessage(UUID npcInstanceId, String playerId, JSONObject params) {
         String message = params != null ? params.optString("message", "An error occurred.") : "An error occurred.";
 
-        // Send red message to player (bypass NPC entity check since this is just error
-        // display)
-        // The HytaleAPI implementation will color this with #FF0000 (red)
+        // 向玩家发送红色错误消息（跳过 NPC 实体检查，这只是错误显示）
+        // HytaleAPI 实现会将此消息着色为 #FF0000（红色）
         hytaleAPI.sendErrorMessage(playerId, message);
 
         logger.warn("[Error] Sent to player [" + playerId + "] (NPC: " + npcInstanceId + "): " + message);
     }
 
     /**
-     * Format NPC message with prefix and name.
-     * Note: Hytale doesn't use Minecraft-style color codes (§ or &).
-     * Colors are applied via the Hytale Message API in sendNpcMessage.
+     * 格式化 NPC 消息，添加前缀和名称
+     * 注意：Hytale 不使用 Minecraft 风格的颜色代码（§ 或 &），
+     * 颜色通过 Hytale Message API 在 sendNpcMessage 中应用。
      */
     private String formatNpcMessage(String npcName, String message, String targetPlayerName) {
-        // Strip any legacy color codes from the prefix
+        // 去除前缀中的旧版颜色代码
         String prefix = config.gameplay().messagePrefix();
-        // Remove § and & color codes (e.g., §6, &r, etc.)
+        // 移除 § 和 & 颜色代码（如 §6、&r 等）
         prefix = prefix.replaceAll("[§&][0-9a-fk-orA-FK-OR]", "");
 
         // E.g. [NPC] Warrior to Steve: Hello there!
         return prefix + npcName + " to " + targetPlayerName + ": " + message;
     }
 
-    // ========== AI Action Methods ==========
+    // ========== AI 行为动作方法 ==========
 
     /**
-     * FOLLOW_TARGET - Make NPC start following a player
+     * 跟随目标 - 让 NPC 开始跟随指定玩家
      */
     private void executeFollowTarget(NpcInstanceData npcInstanceData, JSONObject params) {
         if (npcInstanceData == null)
@@ -595,7 +639,7 @@ public class ActionExecutor {
     }
 
     /**
-     * STOP_FOLLOWING - Make NPC stop following current target
+     * 停止跟随 - 让 NPC 停止跟随当前目标
      */
     private void executeStopFollowing(NpcInstanceData npcInstanceData) {
         if (npcInstanceData == null)
@@ -609,7 +653,7 @@ public class ActionExecutor {
     }
 
     /**
-     * START_ATTACKING - Make NPC start attacking a target
+     * 开始攻击 - 让 NPC 开始攻击指定目标
      */
     private void executeStartAttacking(NpcInstanceData npcInstanceData, JSONObject params) {
         if (npcInstanceData == null)
@@ -632,7 +676,7 @@ public class ActionExecutor {
     }
 
     /**
-     * STOP_ATTACKING - Make NPC stop attacking
+     * 停止攻击 - 让 NPC 停止攻击行为
      */
     private void executeStopAttacking(NpcInstanceData npcInstanceData) {
         if (npcInstanceData == null)
@@ -646,7 +690,7 @@ public class ActionExecutor {
     }
 
     /**
-     * GET_CURRENT_POSITION - Get the NPC's current location
+     * 获取当前位置 - 返回 NPC 的当前世界坐标
      */
     private void executeGetCurrentPosition(NpcInstanceData npcInstanceData, io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
@@ -682,8 +726,8 @@ public class ActionExecutor {
     }
 
     /**
-     * WAIT - Pause for a specified duration (handled server-side)
-     * Note: The actual wait is performed in the backend, this just acknowledges
+     * 等待 - 暂停指定时间（服务端处理）
+     * 注意：实际等待在后端执行，此处仅发送确认
      */
     private void executeWait(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
@@ -695,7 +739,7 @@ public class ActionExecutor {
 
         int duration = params != null ? params.optInt("duration", 1000) : 1000;
 
-        // Acknowledge immediately - the actual wait happens in the backend
+        // 立即确认 - 实际等待在后端进行
         if (ack != null) {
             org.json.JSONObject response = new org.json.JSONObject();
             response.put("success", true);
@@ -709,7 +753,7 @@ public class ActionExecutor {
     }
 
     /**
-     * TELEPORT_PLAYER - Teleport a player to specific coordinates
+     * 传送玩家 - 将玩家传送到指定坐标位置
      */
     private void executeTeleportPlayer(NpcInstanceData npcInstanceData, String playerId, JSONObject params,
             io.socket.client.Ack ack) {
@@ -745,10 +789,10 @@ public class ActionExecutor {
 
         Location destination = Location.of(x, y, z, worldName);
 
-        // Teleport the player
+        // 执行玩家传送
         boolean success = hytaleAPI.teleportPlayerTo(playerId, destination);
 
-        // Send chat message to player confirming teleport
+        // 向玩家发送传送确认消息
         if (success) {
             String message = "You have been teleported to " + locationName + ".";
             hytaleAPI.sendMessage(playerId, message);
@@ -769,10 +813,10 @@ public class ActionExecutor {
         }
     }
 
-    // ========== Inventory Management Methods ==========
+    // ========== 物品栏管理方法 ==========
 
     /**
-     * EQUIP_ITEM - Equip an item to the NPC
+     * 装备物品 - 为 NPC 装备指定物品到指定槽位
      */
     private void executeEquipItem(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
@@ -812,7 +856,7 @@ public class ActionExecutor {
     }
 
     /**
-     * BREAK_BLOCK - Break a block and return drops
+     * 破坏方块 - 破坏指定位置的方块并返回掉落物信息
      */
     private void executeBreakBlock(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
@@ -840,7 +884,7 @@ public class ActionExecutor {
         var result = hytaleAPI.breakBlock(npcInstanceId, target, toolItemId, maxAttempts);
 
         if (ack != null) {
-            // Build JSON manually since org.json.JSONObject doesn't handle records well
+            // 手动构建 JSON，因为 org.json.JSONObject 不能很好地处理 record 类型
             org.json.JSONObject json = new org.json.JSONObject();
             json.put("success", result.success());
             json.put("blockBroken", result.blockBroken());
@@ -865,7 +909,7 @@ public class ActionExecutor {
     }
 
     /**
-     * PICKUP_ITEM - Pick up dropped items near the NPC
+     * 拾取物品 - 拾取 NPC 附近的掉落物品
      */
     private void executePickupItem(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
@@ -899,7 +943,7 @@ public class ActionExecutor {
     }
 
     /**
-     * USE_HELD_ITEM - Use the currently held item multiple times
+     * 使用手持物品 - 多次使用当前手持的物品
      */
     private void executeUseHeldItem(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
@@ -949,7 +993,7 @@ public class ActionExecutor {
     }
 
     /**
-     * DROP_ITEM - Drop an item from inventory to the ground
+     * 丢弃物品 - 将物品从物品栏丢弃到地面
      */
     private void executeDropItem(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
@@ -989,7 +1033,7 @@ public class ActionExecutor {
     }
 
     /**
-     * GET_INVENTORY - Get the NPC's current inventory contents
+     * 获取物品栏 - 获取 NPC 当前的物品栏内容（装备、快捷栏、存储）
      */
     private void executeGetInventory(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
@@ -1025,7 +1069,7 @@ public class ActionExecutor {
     }
 
     /**
-     * UNEQUIP_ITEM - Remove an item from a specific slot
+     * 卸下装备 - 从指定槽位移除物品
      */
     private void executeUnequipItem(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
@@ -1066,7 +1110,7 @@ public class ActionExecutor {
     }
 
     /**
-     * GET_CONTAINER_INVENTORY - Retrieve contents of a container
+     * 获取容器物品栏 - 获取指定坐标容器中的物品内容
      */
     private void executeGetContainerInventory(NpcInstanceData npcInstanceData, JSONObject params,
             io.socket.client.Ack ack) {
@@ -1104,7 +1148,7 @@ public class ActionExecutor {
     }
 
     /**
-     * STORE_ITEM_IN_CONTAINER - Store an item from NPC inventory into a container
+     * 存入容器 - 将 NPC 物品栏中的物品存入指定坐标的容器
      */
     private void executeStoreItemInContainer(NpcInstanceData npcInstanceData, JSONObject params,
             io.socket.client.Ack ack) {
@@ -1135,7 +1179,7 @@ public class ActionExecutor {
     }
 
     /**
-     * TAKE_ITEM_FROM_CONTAINER - Take an item from a container into NPC inventory
+     * 从容器取出 - 从指定坐标的容器中取出物品到 NPC 物���栏
      */
     private void executeTakeItemFromContainer(NpcInstanceData npcInstanceData, JSONObject params,
             io.socket.client.Ack ack) {

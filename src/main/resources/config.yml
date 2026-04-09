@@ -6,7 +6,7 @@
 
 # Connection Settings
 connection:
-  url: "https://api.hycompanion.dev"
+  url: "http://localhost:3000"
   
   # Your server's API key (get this from https://app.hycompanion.dev)
   # REQUIRED: Replace with your actual API key

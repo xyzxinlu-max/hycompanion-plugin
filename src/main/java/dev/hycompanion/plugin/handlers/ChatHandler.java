@@ -30,41 +30,53 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Handles chat messages from players to NPCs
- * 
- * Intercepts player chat, checks for nearby NPCs within range,
- * gathers context, and sends the message to the backend for processing.
- * 
- * TODO: [HYTALE-API] This should be connected to Hytale's chat event system
+ * 处理玩家发送给 NPC 的聊天消息
+ *
+ * 拦截玩家聊天，检查附近范围内的 NPC，
+ * 收集上下文信息，然后将消息发送到后端进行 LLM 处理。
+ *
+ * TODO: [HYTALE-API] 应连接到 Hytale 的聊天事件系统
  */
 public class ChatHandler {
 
+    /** NPC 管理器，用于查找和管理 NPC 实例 */
     private final NpcManager npcManager;
+    /** 上下文构建器，收集玩家周围的世界信息 */
     private final ContextBuilder contextBuilder;
+    /** 日志记录器 */
     private final PluginLogger logger;
+    /** 插件配置（可热重载） */
     private PluginConfig config;
+    /** Socket.IO 管理器，用于与后端通信 */
     private SocketManager socketManager;
+    /** Hytale 游戏 API */
     private HytaleAPI hytaleAPI;
 
-    // Track queues per NPC
+    /** 每个 NPC 的聊天请求队列（按 NPC UUID 索引） */
     private final Map<UUID, Queue<ChatRequest>> npcQueues = new ConcurrentHashMap<>();
-    // Track which NPCs are currently waiting for backend response
+    /** 记录当前正在等待后端响应的 NPC 集合 */
     private final Set<UUID> processingNpcs = ConcurrentHashMap.newKeySet();
-    // Track pending timeout tasks per NPC
+    /** 每个 NPC 的超时任务追踪 */
     private final Map<UUID, ScheduledFuture<?>> pendingTimeouts = new ConcurrentHashMap<>();
 
-    // Timeout for backend responses (60 seconds)
+    /** 后端响应超时时间（60 秒） */
     private static final long BACKEND_TIMEOUT_SECONDS = 60;
-    // Scheduler for timeout tasks
+    /** 超时调度器（守护线程） */
     private final ScheduledExecutorService timeoutScheduler = Executors.newScheduledThreadPool(1, r -> {
         Thread t = new Thread(r, "Hycompanion-ChatTimeout");
         t.setDaemon(true);
         return t;
     });
 
+    /**
+     * 聊天请求记录 - 封装玩家和消息内容
+     */
     private record ChatRequest(GamePlayer player, String message) {
     }
 
+    /**
+     * 构造函数 - 初始化聊天处理器
+     */
     public ChatHandler(NpcManager npcManager, ContextBuilder contextBuilder, PluginLogger logger, PluginConfig config) {
         this.npcManager = npcManager;
         this.contextBuilder = contextBuilder;
@@ -73,34 +85,35 @@ public class ChatHandler {
     }
 
     /**
-     * Set Hytale API (injected after construction for emote support)
+     * 设置 Hytale API（构造后注入，用于表情支持等）
      */
     public void setHytaleAPI(HytaleAPI hytaleAPI) {
         this.hytaleAPI = hytaleAPI;
     }
 
     /**
-     * Set socket manager (injected after construction)
+     * 设置 Socket 管理器（构造后注入）
      */
     public void setSocketManager(SocketManager socketManager) {
         this.socketManager = socketManager;
     }
 
     /**
-     * Set updated config (for reload)
+     * 设置更新后的配置（用于热重载）
      */
     public void setConfig(PluginConfig config) {
         this.config = config;
     }
 
     /**
-     * Handle a chat message from a player
-     * 
-     * This method should be called from Hytale's chat event listener.
-     * 
-     * @param player  The player sending the message
-     * @param message The chat message content
-     * @return True if the message was handled (sent to NPC), false otherwise
+     * 处理玩家的聊天消息
+     *
+     * 此方法应从 Hytale 的聊天事件监听器中调用。
+     * 流程：检查连接状态 -> 获取玩家位置 -> 查找附近 NPC -> 加入队列 -> 发送到后端
+     *
+     * @param player  发送消息的玩家
+     * @param message 聊天消息内容
+     * @return 如果消息被处理（发送给 NPC）返回 true，否则返回 false
      */
     public boolean handleChat(GamePlayer player, String message) {
         logger.info("[ChatHandler] handleChat called for player: " + player.name() + ", message: " + message);
@@ -115,11 +128,11 @@ public class ChatHandler {
             return false;
         }
 
-        // Find NPCs near the player
+        // 查找玩家附近的 NPC
         Location playerLocation = player.location();
 
-        // Always fetch fresh player location from API if possible
-        // The GamePlayer record passed in might be slightly stale (snapshot)
+        // 尽可能从 API 获取最新的玩家位置
+        // 传入的 GamePlayer record 可能是稍旧的快照
         if (hytaleAPI != null) {
             Optional<GamePlayer> freshPlayer = hytaleAPI.getPlayer(player.id());
             if (freshPlayer.isPresent()) {
@@ -136,8 +149,7 @@ public class ChatHandler {
         logger.info("[ChatHandler] Player location: " + playerLocation.toCoordString() +
                 ", checking " + npcManager.getNpcCount() + " registered NPCs");
 
-        // Get nearby NPCs - first try with tracked locations, then fallback to
-        // real-time location query
+        // 获���附近的 NPC - 先尝试使用已跟踪的位置，再回退到实时位置查询
         List<NpcSearchResult> nearbyNpcs = findNpcsNearPlayer(playerLocation);
 
         if (nearbyNpcs.isEmpty()) {
@@ -145,13 +157,13 @@ public class ChatHandler {
             return false;
         }
 
-        // Find closest NPC
+        // 找到最近的 NPC
         NpcInstanceData closestNpc = findClosestNpc(nearbyNpcs, playerLocation);
         if (closestNpc == null) {
             return false;
         }
 
-        // Enqueue the request instead of sending immediately
+        // 将请求加入队列而非立即发送（确保消息按序处理）
         UUID npcId = closestNpc.entityUuid();
         if (npcId != null) {
             npcQueues.computeIfAbsent(npcId, k -> new ConcurrentLinkedQueue<>())
@@ -169,14 +181,14 @@ public class ChatHandler {
     }
 
     /**
-     * Process the next item in the NPC's chat queue
+     * 处理 NPC 聊天队列中的下一条消息
+     * 如果 NPC 正在处理中，则等待当前请求完成后再处理
      */
     private void processQueue(UUID npcId, NpcInstanceData npcInstance) {
         if (npcId == null)
             return;
 
-        // If already processing a request, wait for it to finish (ActionExecutor will
-        // call onNpcAction)
+        // 如果正在处理请求，等待完成（ActionExecutor 会调用 onNpcAction）
         if (processingNpcs.contains(npcId)) {
             logger.debug("[ChatHandler] NPC " + npcId + " is busy processing a request, waiting...");
             return;
@@ -187,7 +199,7 @@ public class ChatHandler {
             return;
         }
 
-        // Mark as processing
+        // 标记为处理中
         processingNpcs.add(npcId);
         ChatRequest request = queue.poll();
 
@@ -196,22 +208,22 @@ public class ChatHandler {
             return;
         }
 
-        // Schedule timeout for this request
+        // 为此请求安排超时计时
         scheduleTimeout(npcId);
 
-        // Rotate idle NPCs to face the player when processing
+        // 处理时让空闲的 NPC 转向玩家
         if (hytaleAPI != null) {
             hytaleAPI.rotateNpcInstanceToward(npcId, request.player.location());
         }
 
-        // Ensure thinking indicator is ON while processing
-        // This stays on as long as the queue is being processed
+        // 确保处理期间思考指示器处于开启状态
+        // 只要队列中有请求在处理，指示器就保持显示
         if (hytaleAPI != null) {
             java.util.concurrent.CompletableFuture.runAsync(() -> {
                 try {
                     hytaleAPI.showThinkingIndicator(npcId);
 
-                    // Also trigger thinking emote if enabled (optional)
+                    // 如果启用了表情功能，还会触发"思考"表情（可选）
                     if (config.gameplay().emotesEnabled()) {
                         hytaleAPI.triggerNpcEmote(npcId, "thinking");
                     }
@@ -221,21 +233,21 @@ public class ChatHandler {
             });
         }
 
-        // Build context (lightweight, keep sync)
+        // 构建世界上下文（轻量级，同步执行）
         WorldContext context = contextBuilder.buildContext(request.player.location());
         JsonObject contextJson = context.toJson();
 
-        // Log chat message being sent (async to not block)
+        // 记录发送的聊天消息（异步执行，避免阻塞）
         if (config.logging().logChat()) {
             final String logMsg = "[" + request.player.name() + "] → [" + npcInstance.npcData().name() + "]: "
                     + request.message;
             java.util.concurrent.CompletableFuture.runAsync(() -> logger.info(logMsg));
         }
 
-        // Get NPC instance UUID (entity UUID)
+        // 获取 NPC 实例 UUID（实体 UUID）
         String npcInstanceUuid = npcId.toString();
 
-        // Send to backend via socket
+        // 通过 Socket.IO 发送给后端
         logger.info("[Socket] Sending PLUGIN_CHAT to backend: npcId=" + npcInstance.npcData().externalId() +
                 ", instanceUuid=" + npcInstanceUuid +
                 ", playerId=" + request.player.id() + ", playerName=" + request.player.name() +
@@ -251,10 +263,8 @@ public class ChatHandler {
     }
 
     /**
-     * Callback when an NPC performs an action (message received from backend).
-     * This signals that the current request is "done" (or at least the NPC has
-     * responded),
-     * so we can process the next item in the queue.
+     * NPC 动作完成回调（从后端接收到响应时触发）
+     * 表示当前请求已完成（NPC 已回复），可以处理队列中的下一条消息。
      */
     public void onNpcAction(UUID npcId) {
         if (npcId == null)
@@ -262,26 +272,26 @@ public class ChatHandler {
 
         logger.debug("[ChatHandler] Action received for NPC " + npcId + ", advancing queue");
 
-        // Cancel any pending timeout
+        // 取消等待中的超时任务
         cancelTimeout(npcId);
 
-        // Mark current request as done
+        // 标记当前请求为已完成
         processingNpcs.remove(npcId);
 
         Queue<ChatRequest> queue = npcQueues.get(npcId);
 
-        // If more items in queue, process next one
+        // 如果队列中还有更多消息，处理下一条
         if (queue != null && !queue.isEmpty()) {
             // Need NpcInstanceData again - fetch it
             NpcInstanceData npcInstance = hytaleAPI.getNpcInstance(npcId);
             if (npcInstance != null) {
                 processQueue(npcId, npcInstance);
             } else {
-                // Should not happen if NPC is still valid
-                processingNpcs.remove(npcId); // Just to be safe
+                // 如果 NPC 仍然有效则不应发生此情况
+                processingNpcs.remove(npcId); // 安全起见清除状态
             }
         } else {
-            // Queue empty - NPC is done thinking
+            // 队列为空 - NPC 思考完成，隐藏思考指示器
             if (hytaleAPI != null) {
                 java.util.concurrent.CompletableFuture.runAsync(() -> {
                     try {
@@ -295,10 +305,10 @@ public class ChatHandler {
     }
 
     /**
-     * Abort the current operation for an NPC and clear its queue.
-     * Called when a backend error occurs (e.g., LLM_ERROR).
-     * 
-     * @param npcId The NPC instance UUID
+     * 中止 NPC 的当前操作并清空其消息队列
+     * 当后端发生错误时调用（如 LLM_ERROR）
+     *
+     * @param npcId NPC 实例的 UUID
      */
     public void abortOperation(UUID npcId) {
         if (npcId == null)
@@ -306,13 +316,13 @@ public class ChatHandler {
 
         logger.info("[ChatHandler] Aborting operation for NPC " + npcId);
 
-        // Cancel any pending timeout
+        // 取消等待中的超时任务
         cancelTimeout(npcId);
 
-        // Remove from processing set
+        // 从处理集合中移除
         processingNpcs.remove(npcId);
 
-        // Clear the queue for this NPC
+        // 清空该 NPC 的消息队列
         Queue<ChatRequest> queue = npcQueues.get(npcId);
         if (queue != null) {
             int cleared = queue.size();
@@ -320,7 +330,7 @@ public class ChatHandler {
             logger.info("[ChatHandler] Cleared " + cleared + " pending request(s) for NPC " + npcId);
         }
 
-        // Hide thinking indicator
+        // 隐藏思考指示器
         if (hytaleAPI != null) {
             java.util.concurrent.CompletableFuture.runAsync(() -> {
                 try {
@@ -333,24 +343,24 @@ public class ChatHandler {
     }
 
     /**
-     * Schedule a timeout for a pending backend request.
-     * If no response arrives within BACKEND_TIMEOUT_SECONDS, the operation is aborted.
+     * 为等待后端响应的请求安排超时任务
+     * 如果在 BACKEND_TIMEOUT_SECONDS 内没有收到响应，操作将被中止
      */
     private void scheduleTimeout(UUID npcId) {
-        // Cancel any existing timeout first
+        // 先取消现有的超时任务
         cancelTimeout(npcId);
 
         ScheduledFuture<?> timeoutTask = timeoutScheduler.schedule(() -> {
             logger.warn("[ChatHandler] Backend response timeout for NPC " + npcId +
                     " after " + BACKEND_TIMEOUT_SECONDS + " seconds");
 
-            // Remove from pending timeouts (task is complete)
+            // 从待处理超时列表中移除（任务已完成）
             pendingTimeouts.remove(npcId);
 
-            // Abort the operation to clear state and queue
+            // 中止操作以清除状态和队列
             abortOperation(npcId);
 
-            // Optionally notify the player
+            // 可选：通知玩家请求已超时
             Queue<ChatRequest> queue = npcQueues.get(npcId);
             if (queue != null && !queue.isEmpty()) {
                 ChatRequest request = queue.peek();
@@ -367,7 +377,7 @@ public class ChatHandler {
     }
 
     /**
-     * Cancel any pending timeout for an NPC.
+     * 取消指定 NPC 的等待超时任务
      */
     private void cancelTimeout(UUID npcId) {
         ScheduledFuture<?> existingTask = pendingTimeouts.remove(npcId);
@@ -378,7 +388,7 @@ public class ChatHandler {
     }
 
     /**
-     * Shutdown the timeout scheduler. Should be called on plugin disable.
+     * 关闭超时调度器。应在插件禁用时调用。
      */
     public void shutdown() {
         logger.info("[ChatHandler] Shutting down timeout scheduler");
@@ -387,21 +397,20 @@ public class ChatHandler {
     }
 
     /**
-     * Find NPC instances near a player where the player is within the NPC's chat
-     * range.
-     * 
-     * Uses NpcManager's spatial index with per-NPC range checking.
-     * 
-     * @param playerLocation The player's current location
-     * @return List of NPC instances within chat range
+     * 查找玩家附近的 NPC 实例（玩家在 NPC 的聊天范围内）
+     *
+     * 使用 NpcManager 的空间索引，逐个检查每个 NPC 的聊天范围。
+     *
+     * @param playerLocation 玩家的当前位置
+     * @return 在聊天范围内的 NPC 实例列表
      */
     private List<NpcSearchResult> findNpcsNearPlayer(Location playerLocation) {
-        // Use global config as default if NPC has no specific range
+        // 如果 NPC 没有特定范围，使用全局配置作为默认值
 
         logger.info("[ChatHandler] Searching for NPCs near "
                 + playerLocation.toCoordString());
 
-        // Use NpcManager's spatial index with per-NPC range check
+        // 使用 NpcManager 的空间索引并检查每个 NPC 的聊天范围
         List<NpcSearchResult> nearbyNpcs = npcManager.getNpcsNear(playerLocation, 20);
 
         logger.info("[ChatHandler] Found " + nearbyNpcs.size() + " NPCs within range");
@@ -467,15 +476,15 @@ public class ChatHandler {
     // }
 
     /**
-     * Find the closest NPC to a location
+     * 从搜索结果中找到距离指定位置最近的 NPC
      */
     private NpcInstanceData findClosestNpc(List<NpcSearchResult> npcResults, Location location) {
         NpcInstanceData closest = null;
         double closestDistance = Double.MAX_VALUE;
 
         for (NpcSearchResult result : npcResults) {
-            // We already have the precise location and distance from NpcManager search
-            // No need to query API again (which risks timeout)
+            // NpcManager 搜索已提供精确的位置和距离信息
+            // 无需再次查询 API（避免超时风险）
 
             if (result.distance() < closestDistance) {
                 closestDistance = result.distance();
@@ -488,8 +497,7 @@ public class ChatHandler {
                     "[ChatHandler] findClosestNpc Selected: " + closest.entityUuid() + " Distance: " + closestDistance);
         }
 
-        // Fallback if list was not empty but somehow no closest found (should not
-        // happen)
+        // 兜底处理：列表非空但未找到最近 NPC（理论上不应发生）
         return closest != null ? closest : (!npcResults.isEmpty() ? npcResults.get(0).instance() : null);
     }
 }

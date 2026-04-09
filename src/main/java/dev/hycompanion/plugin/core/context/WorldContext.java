@@ -6,15 +6,14 @@ import com.google.gson.JsonObject;
 import java.util.List;
 
 /**
- * World context data sent with chat events
- * 
- * Provides environmental information to enrich NPC responses
- * 
- * @param location      Player location as "x,y,z" string
- * @param timeOfDay     Current time of day (dawn, morning, noon, afternoon,
- *                      dusk, night)
- * @param weather       Current weather (clear, rain, storm, snow)
- * @param nearbyPlayers List of nearby player names
+ * 世界上下文数据 - 随聊天事件一起发送给后端。
+ *
+ * 提供环境信息以丰富NPC的回复内容。
+ *
+ * @param location      玩家位置，格式为"x,y,z"字符串
+ * @param timeOfDay     当前时间段（dawn/morning/noon/afternoon/dusk/night）
+ * @param weather       当前天气（clear/rain/storm/snow）
+ * @param nearbyPlayers 附近玩家名称列表
  */
 public record WorldContext(
         String location,
@@ -23,7 +22,8 @@ public record WorldContext(
         List<String> nearbyPlayers) {
 
     /**
-     * Convert to JSON for socket payload
+     * 转换为JSON对象，用于Socket.IO通信载荷。
+     * 仅包含非空字段。
      */
     public JsonObject toJson() {
         JsonObject json = new JsonObject();
@@ -50,14 +50,14 @@ public record WorldContext(
     }
 
     /**
-     * Create a minimal context with just location
+     * 创建仅包含位置的最简上下文
      */
     public static WorldContext minimal(String location) {
         return new WorldContext(location, null, null, List.of());
     }
 
     /**
-     * Create a default context with mock values
+     * 创建带有默认模拟值的上下文（位置0,64,0 / 正午 / 晴天）
      */
     public static WorldContext defaultContext() {
         return new WorldContext(

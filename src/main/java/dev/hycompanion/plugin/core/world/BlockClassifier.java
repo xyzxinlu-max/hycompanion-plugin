@@ -3,94 +3,93 @@ package dev.hycompanion.plugin.core.world;
 import java.util.*;
 
 /**
- * Classifies blocks by material type based on their IDs and display names.
- * Uses keyword extraction and pattern matching since Hytale block tags are often empty.
- * 
- * This enables the LLM to understand that "Cedar Trunk" is "wood" even if
- * the block's tags don't explicitly say "wood".
- * 
+ * 方块材质分类器 - 根据方块ID和显示名称对方块进行材质类型分类。
+ * 使用关键词提取和模式匹配，因为Hytale方块标签通常为空。
+ *
+ * 这使得LLM能够理解"Cedar Trunk"是"wood"（木材），即使方块标签中
+ * 没有明确标注"wood"。
+ *
  * @author Hycompanion Team
  */
 public class BlockClassifier {
 
-    // Material type → keywords that indicate that material
-    // Order matters: more specific types should come before generic ones
+    // 材质类型到关键词列表的映射（有序，更具体的类型排在前面）
     private static final Map<String, List<String>> MATERIAL_KEYWORDS = new LinkedHashMap<>();
     
     static {
-        // Wood and tree materials
+        // 木材和树木类材质
         MATERIAL_KEYWORDS.put("wood", Arrays.asList(
             "wood", "trunk", "log", "plank", "timber", "lumber",
             "cedar", "oak", "birch", "spruce", "pine", "fir", "ash", "elm",
             "willow", "maple", "mahogany", "ebony", "teak", "acacia", "bamboo"
         ));
         
-        // Stone and rock materials
+        // 石头和岩石类材质
         MATERIAL_KEYWORDS.put("stone", Arrays.asList(
             "stone", "rock", "cobble", "cobblestone", "granite", "marble", 
             "slate", "basalt", "obsidian", "sandstone", "limestone", 
             "quartz", "diorite", "andesite", "pumice", "chalk", "shale"
         ));
         
-        // Ores and minerals
+        // 矿石和矿物类材质
         MATERIAL_KEYWORDS.put("ore", Arrays.asList(
             "ore", "iron", "gold", "copper", "coal", "diamond", "emerald",
             "ruby", "sapphire", "amethyst", "topaz", "coal", "tin", "lead",
             "silver", "mithril", "adamantite", "crystal", "gem"
         ));
         
-        // Metals (processed, not ore)
+        // 金属类（加工后的，非矿石）
         MATERIAL_KEYWORDS.put("metal", Arrays.asList(
             "metal", "steel", "bronze", "brass", "iron_bar", "gold_bar",
             "copper_bar", "silver_bar", "plate", "sheet"
         ));
         
-        // Soil and earth materials
+        // 土壤和泥土类材质
         MATERIAL_KEYWORDS.put("soil", Arrays.asList(
             "dirt", "soil", "mud", "clay", "sand", "gravel", "silt", 
             "peat", "loam", "earth", "dust"
         ));
         
-        // Plants and organic materials
+        // 植物和有机材质
         MATERIAL_KEYWORDS.put("plant", Arrays.asList(
             "plant", "crop", "flower", "sapling", "seed",
             "grass", "fern", "vine", "moss", "lichen", "bush", "shrub",
             "hay", "straw", "reed", "cane", "root", "bulb", "petal"
         )); //Removed  "leaf", "leaves", because they can be higher up in the tree (failing path finding)
         
-        // Fungi
+        // 真菌类材质
         MATERIAL_KEYWORDS.put("fungus", Arrays.asList(
             "mushroom", "fungus", "fungi", "spore", "mycelium", "mold", "mould"
         ));
         
-        // Fluids
+        // 流体类材质
         MATERIAL_KEYWORDS.put("fluid", Arrays.asList(
             "water", "lava", "fluid", "liquid", "flow", "stream", "river",
             "ocean", "lake", "puddle", "source"
         ));
         
-        // Glass and transparent materials
+        // 玻璃和透明材质
         MATERIAL_KEYWORDS.put("glass", Arrays.asList(
             "glass", "window", "pane", "crystal_clear", "transparent"
         ));
         
-        // Bricks and masonry
+        // 砖块和砌体材质
         MATERIAL_KEYWORDS.put("brick", Arrays.asList(
             "brick", "masonry", "tile", "ceramic", "porcelain", "clay_brick"
         ));
         
-        // Ice and snow
+        // 冰雪类材质
         MATERIAL_KEYWORDS.put("ice", Arrays.asList(
             "ice", "snow", "frost", "frozen", "permafrost", "glacier"
         ));
         
-        // Fabric and soft materials
+        // 织物和柔软材质
         MATERIAL_KEYWORDS.put("fabric", Arrays.asList(
             "wool", "cloth", "fabric", "cotton", "silk", "linen", "canvas",
             "carpet", "rug", "tapestry", "curtain", "banner"
         ));
         
-        // Construction/structural (generic building materials)
+        // 建筑/结构材质（通用建筑材料）
         MATERIAL_KEYWORDS.put("structural", Arrays.asList(
             "concrete", "cement", "plaster", "drywall", "roofing", "shingle",
             "beam", "pillar", "column", "support", "frame", "scaffold"
@@ -98,35 +97,42 @@ public class BlockClassifier {
     }
 
     /**
-     * Classifies a block based on its ID and display name.
-     * 
-     * @param blockId       The block's unique ID
-     * @param displayName   The human-readable display name
-     * @return BlockInfo with extracted material types and keywords
+     * 根据方块ID和显示名称对方块进行分类（简化版本）。
+     *
+     * @param blockId     方块的唯一ID
+     * @param displayName 人类可读的显示名称
+     * @return 包含提取的材质类型和关键词的BlockInfo
      */
     public static BlockInfo classify(String blockId, String displayName) {
         return classify(blockId, displayName, null, null);
     }
     
     /**
-     * Classifies a block based on its ID, display name, and actual Hytale tags.
-     * 
-     * @param blockId       The block's unique ID (e.g., "Cloth_Block_Wool_Black")
-     * @param displayName   The human-readable display name (e.g., "Black Cloth")
-     * @param tags          The raw tags from Hytale block data (e.g., {"Type": ["Cloth"]})
-     * @param categories    The block categories (e.g., ["Blocks.Rocks"])
-     * @return BlockInfo with extracted material types and keywords
+     * 根据方块ID、显示名称以及Hytale标签进行完整分类。
+     *
+     * 分类流程：
+     * 1. 标准化ID和名称，提取关键词
+     * 2. 从Hytale原始标签中补充关键词
+     * 3. 通过关键词匹配确定材质类型
+     * 4. 从Hytale Type标签推断额外材质类型
+     *
+     * @param blockId     方块唯一ID（如"Cloth_Block_Wool_Black"）
+     * @param displayName 人类可读名称（如"Black Cloth"）
+     * @param tags        Hytale方块原始标签（如{"Type": ["Cloth"]}）
+     * @param categories  方块类别（如["Blocks.Rocks"]）
+     * @return 包含材质类型和关键词的BlockInfo
      */
-    public static BlockInfo classify(String blockId, String displayName, 
+    public static BlockInfo classify(String blockId, String displayName,
             Map<String, String[]> tags, List<String> categories) {
+        // 标准化方块ID和名称，合并为统一字符串用于匹配
         String normalizedId = normalize(blockId);
         String normalizedName = normalize(displayName);
         String combined = normalizeWhitespace(normalizedId + " " + normalizedName);
-        
-        // Extract keywords from ID and name
+
+        // 从ID和名称中提取关键词
         Set<String> keywords = extractKeywords(combined);
-        
-        // Also extract from Hytale tags if available (e.g., "Cloth", "Ore", "Gold")
+
+        // 从Hytale标签中补充提取关键词（如"Cloth"、"Ore"、"Gold"）
         if (tags != null) {
             for (Map.Entry<String, String[]> tagEntry : tags.entrySet()) {
                 String tagKey = tagEntry.getKey(); // e.g., "Type", "Family"
@@ -142,7 +148,7 @@ public class BlockClassifier {
             }
         }
         
-        // Determine material types from ID/name matching
+        // 通过ID/名称的关键词匹配来确定材质类型
         List<String> materialTypes = new ArrayList<>();
         for (Map.Entry<String, List<String>> entry : MATERIAL_KEYWORDS.entrySet()) {
             String material = entry.getKey();
@@ -159,9 +165,9 @@ public class BlockClassifier {
             }
         }
         
-        // Also infer material types from Hytale tags
-        // e.g., if Type=["Cloth"] -> material type is "fabric"
-        // e.g., if Type=["Ore"] -> material type is "ore"
+        // 从Hytale标签推断材质类型
+        // 例如：Type=["Cloth"] -> 材质类型为"fabric"
+        // 例如：Type=["Ore"] -> 材质类型为"ore"
         if (tags != null) {
             String[] typeTags = tags.get("Type");
             if (typeTags != null) {
@@ -201,7 +207,7 @@ public class BlockClassifier {
                 }
             }
             
-            // Handle Family tags for more specific classification
+            // 处理Family标签以获取更具体的分类
             String[] familyTags = tags.get("Family");
             if (familyTags != null) {
                 for (String familyTag : familyTags) {
@@ -210,7 +216,7 @@ public class BlockClassifier {
             }
         }
         
-        // If no material type matched, mark as "misc"
+        // 如果没有匹配到任何材质类型，标记为"misc"（杂项���
         if (materialTypes.isEmpty()) {
             materialTypes.add("misc");
         }
@@ -225,8 +231,8 @@ public class BlockClassifier {
     }
     
     /**
-     * Quick classification - just returns material types without full enrichment.
-     * Useful for filtering.
+     * 快速分类 - 仅返回材质类型，不进行完整的信息丰富化。
+     * 适用于过滤场景。
      */
     public static List<String> getMaterialTypes(String blockId, String displayName) {
         String combined = normalizeWhitespace(normalize(blockId) + " " + normalize(displayName));
@@ -245,14 +251,14 @@ public class BlockClassifier {
     }
     
     /**
-     * Checks if a block matches a specific material type.
+     * 检查方块是否属于指定的材质类型。
      */
     public static boolean isMaterialType(String blockId, String displayName, String materialType) {
         return getMaterialTypes(blockId, displayName).contains(materialType.toLowerCase());
     }
     
     /**
-     * Normalize a string for matching: lowercase, remove underscores/dashes.
+     * 标准化字符串用于匹配：转为小写，将下划线和短横线替换为空格。
      */
     private static String normalize(String input) {
         if (input == null) return "";
@@ -262,15 +268,15 @@ public class BlockClassifier {
     }
 
     /**
-     * Collapse repeated whitespace to simplify boundary-aware matching.
+     * 合并连续空白字符，简化边界匹配。
      */
     private static String normalizeWhitespace(String input) {
         return input.trim().replaceAll("\\s+", " ");
     }
 
     /**
-     * Matches indicator as a whole token or multi-token phrase.
-     * Example: "flow" matches "_Flow_" but not "flower".
+     * 以完整词或多词短语的方式匹配指示词（边界感知）。
+     * 例如："flow"能匹配"_Flow_"但不匹配"flower"。
      */
     private static boolean containsIndicatorWithBoundaries(String combined, String indicator) {
         String normalizedIndicator = normalizeWhitespace(normalize(indicator));
@@ -298,13 +304,14 @@ public class BlockClassifier {
     }
     
     /**
-     * Extract individual keywords from a string.
+     * 从标准化字符串中提取单个关键词。
+     * 跳过长度不超过2的短词。
      */
     private static Set<String> extractKeywords(String normalized) {
         Set<String> keywords = new HashSet<>();
         String[] parts = normalized.split("\\s+");
         for (String part : parts) {
-            if (part.length() > 2) { // Skip very short tokens
+            if (part.length() > 2) { // 跳过过短的词
                 keywords.add(part);
             }
         }
@@ -312,7 +319,7 @@ public class BlockClassifier {
     }
     
     /**
-     * Get all known material types.
+     * 获取所有已知的材质类型列表。
      */
     public static List<String> getAllMaterialTypes() {
         return List.copyOf(MATERIAL_KEYWORDS.keySet());

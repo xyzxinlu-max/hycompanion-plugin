@@ -40,45 +40,52 @@ import java.util.Set;
 
 /**
  * Hycompanion Plugin Entry Point for Hytale Server
- * 
- * This class extends JavaPlugin and serves as the main entry point
- * when the plugin is loaded by a real Hytale server.
- * 
+ * Hycompanion 插件 - Hytale 服务器入口点
+ *
+ * 继承 JavaPlugin，作为插件被真实 Hytale 服务器加载时的主入口。
+ * 管理完整的插件生命周期：setup（预加载）-> start（启动）-> shutdown（关闭）
+ *
+ * 与 HycompanionPlugin（独立测试模式）不同，本类直接与 Hytale Server API 交互，
+ * 包括事件注册、命令注册、NPC 实体发现、玩家聊天监听等。
+ *
  * @author Hycompanion Team
  * @version 1.1.6
  */
 public class HycompanionEntrypoint extends JavaPlugin {
 
+    // Hytale 原生日志记录器
     private static final HytaleLogger HYTALE_LOGGER = HytaleLogger.forEnclosingClass();
+    // 插件版本号
     public static final String VERSION = "1.1.6-SNAPSHOT";
 
-    // Plugin components
-    private PluginLogger logger;
-    private PluginConfig config;
-    private HytaleAPI hytaleAPI;
-    private SocketManager socketManager;
-    private NpcManager npcManager;
-    private NpcConfigManager npcConfigManager;
-    private ActionExecutor actionExecutor;
-    private ChatHandler chatHandler;
-    private ContextBuilder contextBuilder;
-    private RoleGenerator roleGenerator;
-    private NpcGreetingService greetingService;
-    private Path dataFolder;
+    // ===== 插件核心组件 =====
+    private PluginLogger logger;               // 插件日志记录器
+    private PluginConfig config;               // 插件配置
+    private HytaleAPI hytaleAPI;               // Hytale API 抽象层（真实服务器适配器）
+    private SocketManager socketManager;       // Socket.IO 网络连接管理器
+    private NpcManager npcManager;             // NPC 数据与实例管理器
+    private NpcConfigManager npcConfigManager; // NPC 配置缓存管理器
+    private ActionExecutor actionExecutor;     // 后端动作执行器
+    private ChatHandler chatHandler;           // 玩家聊天处理器
+    private ContextBuilder contextBuilder;     // 游戏上下文构建器
+    private RoleGenerator roleGenerator;       // NPC 角色文件生成器（管理 Hytale 数据资产）
+    private NpcGreetingService greetingService;// NPC 靠近玩家时的问候服务
+    private Path dataFolder;                   // 插件数据文件夹路径
 
-    // Dedicated scheduler for plugin background tasks (Daemon threads)
+    // 插件后台任务的守护线程调度器
     private java.util.concurrent.ScheduledExecutorService pluginScheduler;
 
-    // Centralized shutdown manager - single source of truth for shutdown state
+    // 集中式关闭管理器 - 关闭状态的唯一来源
     private ShutdownManager shutdownManager;
 
-    // Flag to track if entity discovery has been performed
+    // 标记实体发现是否已执行（volatile 保证线程可见性）
     private volatile boolean entityDiscoveryDone = false;
 
     /**
-     * Constructor required by Hytale plugin loader
-     * 
-     * @param init Plugin initialization data provided by Hytale
+     * 构造方法 - Hytale 插件加载器所需
+     * 由 Hytale 服务器在加载插件时自动调用
+     *
+     * @param init Hytale 提供的插件初始化数据
      */
     public HycompanionEntrypoint(@Nonnull JavaPluginInit init) {
         super(init);
@@ -87,48 +94,58 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Get the shutdown manager for other components to register.
+     * 获取关闭管理器，供其他组件注册关闭回调
      */
     public ShutdownManager getShutdownManager() {
         return shutdownManager;
     }
 
     /**
-     * Check if the server is shutting down.
-     * Used by SocketManager and other components to prevent new operations during shutdown.
+     * 检查服务器是否正在关闭中
+     * 供 SocketManager 等组件使用，防止在关闭期间执行新操作
      */
     public static boolean isShuttingDown() {
         return getInstance() != null && getInstance().shutdownManager != null 
             && getInstance().shutdownManager.isShuttingDown();
     }
 
+    // 单例实例
     private static HycompanionEntrypoint instance;
 
+    /** 获取插件单例实例 */
     public static HycompanionEntrypoint getInstance() {
         return instance;
     }
 
     /**
-     * Setup phase - runs BEFORE asset loading.
-     * NOTE: Hytale blocks network access during setup() phase.
-     * We can only load cached role files from previous runs here.
-     * Role syncing happens during start() and roles are cached for next startup.
+     * 预加载阶段 - 在资源加载之前运行
+     *
+     * 注意：Hytale 在 setup() 阶段会阻止网络访问。
+     * 因此只能在此加载上次运行时缓存的角色文件。
+     * 角色同步将在 start() 阶段进行，同步后缓存供下次启动使用。
+     *
+     * 主要工作：
+     * 1. 初始化日志和关闭管理器
+     * 2. 配置 Sentry 错误追踪（可选）
+     * 3. 加载配置文件
+     * 4. 初始化角色生成器并加载缓存的角色文件
+     * 5. 注册 Hytale 事件监听器
      */
     @Override
     protected void setup() {
         HYTALE_LOGGER.atInfo().log("Hycompanion setup() starting...");
 
-        // Initialize logger first (needed for ShutdownManager)
+        // 首先初始化日志记录器（ShutdownManager 需要它）
         logger = new PluginLogger("Hycompanion");
-        
-        // Initialize centralized shutdown manager early
+
+        // 尽早初始化集中式关闭管理器
         shutdownManager = new ShutdownManager(logger);
         HYTALE_LOGGER.atInfo().log("ShutdownManager initialized");
 
         try {
 
-            // Configure Sentry DSN via environment variable SENTRY_DSN
-            // Set SENTRY_DSN environment variable to enable error tracking
+            // 通过环境变量 SENTRY_DSN 配置 Sentry 错误追踪
+            // 设置 SENTRY_DSN 环境变量以启用错误追踪
             String sentryDsn = System.getenv("SENTRY_DSN");
             if (sentryDsn != null && !sentryDsn.isEmpty()) {
                 Sentry.init(
@@ -182,7 +199,7 @@ public class HycompanionEntrypoint extends JavaPlugin {
 
             logger.info("Setup phase - initializing...");
 
-            // Set global uncaught exception handler to capture all unhandled exceptions
+            // 设置全局未捕获异常处理器，捕获所有未处理的异常
             Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
                 logger.error("Uncaught exception in thread " + thread.getName() + ": " + throwable.getMessage());
                 if (sentryDsn != null && !sentryDsn.isEmpty()) {
@@ -195,7 +212,7 @@ public class HycompanionEntrypoint extends JavaPlugin {
                 logger.info("Global uncaught exception handler registered (Sentry disabled)");
             }
 
-            // Get data folder and load config early
+            // 获取数据文件夹并提前加载配置
             dataFolder = getDataDirectory();
             HYTALE_LOGGER.atInfo().log("Data directory: " + dataFolder.toString());
 
@@ -206,7 +223,7 @@ public class HycompanionEntrypoint extends JavaPlugin {
 
             logger.info("Configuration loaded from " + dataFolder.resolve("config.yml"));
 
-            // Check if API key is configured
+            // 检查 API 密钥是否已配置
             String apiKey = config.connection().apiKey();
             if (apiKey == null || apiKey.isEmpty() || apiKey.equals("YOUR_SERVER_API_KEY")) {
                 logger.warn("========================================================");
@@ -219,19 +236,17 @@ public class HycompanionEntrypoint extends JavaPlugin {
                 logger.warn("========================================================");
             }
 
-            // Initialize role generator
-            // modDirectory should be mods/<plugin-id>/ e.g.
-            // mods/dev.hycompanion_Hycompanion/
-            // Note: getIdentifier() uses ":" but folder uses "_" (Windows compatibility)
+            // 初始化角色生成器
+            // modDirectory 为 mods/<plugin-id>/，例如 mods/dev.hycompanion_Hycompanion/
+            // 注意：getIdentifier() 使用 ":" 但文件夹使用 "_"（兼容 Windows）
             Path modsFolder = dataFolder.getParent();
             String modFolderName = getIdentifier().toString().replace(":", "_");
             Path modDirectory = modsFolder.resolve(modFolderName);
             HYTALE_LOGGER.atInfo().log("Mod directory for role files: " + modDirectory.toString());
             roleGenerator = new RoleGenerator(modDirectory, dataFolder, logger);
 
-            // Load cached role files from previous runs
-            // (Network is not available during setup phase - roles are synced during
-            // start())
+            // 从上次运行中加载缓存的角色文件
+            // （setup 阶段网络不可用 - 角色同步在 start() 阶段进行）
             int cachedRoles = roleGenerator.loadCachedRoles();
             if (cachedRoles > 0) {
                 logger.info("Loaded " + cachedRoles + " cached NPC role files from previous session");
@@ -245,24 +260,23 @@ public class HycompanionEntrypoint extends JavaPlugin {
                 logger.info("========================================================");
             }
 
-            // Register for AllNPCsLoadedEvent to trigger entity discovery
-            // This event fires when Hytale finishes loading/reloading NPC entities
+            // 注册 AllNPCsLoadedEvent 以触发实体发现
+            // 当 Hytale 完成加载/重载 NPC 实体时触发此事件
             getEventRegistry().register(AllNPCsLoadedEvent.class, event -> onAllNpcsLoaded(event));
 
-            // Register for first player join to trigger entity discovery
-            // Chunks aren't loaded until a player connects, so entities can't be found
-            // earlier
+            // 注册玩家首次加入世界事件，作为实体发现的备用触发器
+            // 区块在玩家连接前不会加载，因此实体不能更早被发现
             getEventRegistry().registerGlobal(AddPlayerToWorldEvent.class, this::onPlayerAddedToWorld);
-            
-            // Register for player disconnect to clear NPC follow targets
-            // This prevents "Invalid entity reference" errors during shutdown
+
+            // 注册玩家断开连接事件，清除 NPC 跟随目标
+            // 防止关闭期间出现"无效实体引用"错误
             getEventRegistry().registerGlobal(PlayerDisconnectEvent.class, this::onPlayerDisconnect);
-            
-            // Register for early shutdown event to clear NPC references before world shutdown
-            // Priority -48 = DISCONNECT_PLAYERS phase - we clear NPCs before players are removed
+
+            // 注册早期关闭事件，在世界关闭前清除 NPC 引用
+            // 优先级 -48 = DISCONNECT_PLAYERS 阶段 - 在玩家被移除前清除 NPC
             getEventRegistry().register((short)-48, ShutdownEvent.class, this::onServerShutdown);
-            
-            // Register death detection system for NPC respawn
+
+            // 注册 NPC 死亡检测系统（用于 NPC 重生）
             com.hypixel.hytale.server.core.universe.world.storage.EntityStore.REGISTRY.registerSystem(new NpcRespawnSystem());
             logger.info("Registered NPC respawn death detection system");
             
@@ -281,12 +295,23 @@ public class HycompanionEntrypoint extends JavaPlugin {
         }
     }
 
+    /**
+     * 启动阶段 - 在资源加载完成后运行
+     *
+     * 此阶段网络已可用，执行完整的插件初始化：
+     * 1. 确保配置和数据文件夹已就绪（兼容 setup 未执行的情况）
+     * 2. 初始化 Hytale 真实服务器 API 适配器
+     * 3. 初始化各管理器和处理器
+     * 4. 建立与后端的 Socket.IO 连接
+     * 5. 注册事件监听器和命令
+     * 6. 启动 NPC 靠近问候服务
+     */
     @Override
     protected void start() {
         HYTALE_LOGGER.atInfo().log("Hycompanion start() beginning...");
 
-        // Logger and config already initialized in setup()
-        // If setup() wasn't called for some reason, initialize them now
+        // 日志和配置已在 setup() 中初始化
+        // 如果 setup() 未被调用，则在此初始化
         if (logger == null) {
             logger = new PluginLogger("Hycompanion");
         }
@@ -299,20 +324,20 @@ public class HycompanionEntrypoint extends JavaPlugin {
         logger.info("======================================");
 
         try {
-            // Ensure data folder exists (should already be created in setup)
+            // 确保数据文件夹存在（正常情况下 setup 阶段已创建）
             if (dataFolder == null) {
                 dataFolder = getDataDirectory();
                 Files.createDirectories(dataFolder);
             }
 
-            // Reload config if needed (should already be loaded in setup)
+            // 如果需要则重新加载配置（正常情况下 setup 阶段已加载）
             if (config == null) {
                 copyDefaultConfig();
                 config = PluginConfig.load(dataFolder.resolve("config.yml"));
                 logger.setDebugMode(config.gameplay().debugMode());
             }
 
-            // Initialize role generator if not done in setup
+            // 如果 setup 阶段未初始化角色生成器，则在此初始化
             if (roleGenerator == null) {
                 Path modsFolder = dataFolder.getParent();
                 String modFolderName = getIdentifier().toString().replace(":", "_");
@@ -322,13 +347,13 @@ public class HycompanionEntrypoint extends JavaPlugin {
 
             logger.info("Configuration loaded successfully");
 
-            // Initialize ShutdownManager early if not done in setup()
+            // 如果 setup() 中未初始化关闭管理器，则在此初始化
             if (shutdownManager == null) {
                 shutdownManager = new ShutdownManager(logger);
                 logger.info("ShutdownManager initialized");
             }
             
-            // Register JVM shutdown hook for early detection
+            // 注册 JVM 关闭钩子，用于早期检测关闭信号
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 logger.info("JVM shutdown hook triggered - initiating early cleanup");
                 if (shutdownManager != null) {
@@ -336,47 +361,46 @@ public class HycompanionEntrypoint extends JavaPlugin {
                 }
             }, "Hycompanion-Shutdown-Hook"));
             
-            // Initialize Hytale API adapter with real server API
+            // 使用真实服务器 API 初始化 Hytale API 适配器
             hytaleAPI = new HytaleServerAdapter(logger, this, shutdownManager);
             logger.info("Hytale API adapter initialized (Real Server Mode)");
 
-            // Initialize managers
+            // 初始化各管理器
             npcManager = new NpcManager(logger, hytaleAPI);
             npcConfigManager = new NpcConfigManager(dataFolder.resolve(config.npc().cacheDirectory()), logger);
             contextBuilder = new ContextBuilder(hytaleAPI, logger);
 
-            // Create daemon scheduler for plugin tasks
+            // 创建守护线程调度器，用于插件后台任务（如 NPC 靠近检测）
             pluginScheduler = java.util.concurrent.Executors.newScheduledThreadPool(2, r -> {
                 Thread t = new Thread(r, "Hycompanion-Background-Worker");
                 t.setDaemon(true);
                 return t;
             });
 
-            // Initialize action executor
+            // 初始化动作执行器（处理后端返回的 MCP 工具动作）
             actionExecutor = new ActionExecutor(hytaleAPI, npcManager, logger, config);
 
-            // Initialize chat handler
+            // 初始化聊天处理器（处理玩家与 NPC 的对话）
             chatHandler = new ChatHandler(npcManager, contextBuilder, logger, config);
             chatHandler.setHytaleAPI(hytaleAPI);
 
-            // Connect ActionExecutor to ChatHandler (circular dependency handled via
-            // setter)
+            // 将 ActionExecutor 与 ChatHandler 双向关联（通过 setter 解决循环依赖）
             actionExecutor.setChatHandler(chatHandler);
 
-            // Initialize socket manager and connect (pass roleGenerator for caching)
+            // 初始化 Socket.IO 连接并连接后端（传入 roleGenerator 用于角色缓存）
             initializeSocketConnection();
 
-            // Register event listeners
+            // 注册 Hytale 事件监听器（玩家聊天等）
             registerEventListeners();
 
-            // Register commands
+            // 注册插件命令（/hycompanion）
             registerCommands();
 
-            // Initialize and start NPC greeting service
+            // 初始化并启动 NPC 靠近问候服务（每秒检测一次玩家是否靠近 NPC）
             greetingService = new NpcGreetingService(hytaleAPI, npcManager, config, logger);
             greetingService.startProximityChecks(
                     pluginScheduler,
-                    1000 // Check every 1 second
+                    1000 // 每 1 秒检测一次
             );
 
             logger.info("Hycompanion enabled successfully on Hytale Server!");
@@ -391,11 +415,24 @@ public class HycompanionEntrypoint extends JavaPlugin {
         }
     }
 
+    /**
+     * 最终关闭阶段 - 在服务器关闭时由 Hytale 调用
+     *
+     * 注意：早期清理工作已在 onServerShutdown()（优先级 -48）中完成，
+     * 包括断开 Socket 连接、停止定期任务、设置关闭标志。
+     *
+     * 此方法执行最终清理：
+     * 步骤 1: 清除实体引用（此时 Hytale 区块保存已完成，可以安全操作）
+     * 步骤 2: 阻止世界操作
+     * 步骤 3: 关闭后台调度器和聊天处理器
+     * 步骤 4: 保存 NPC 配置
+     * 步骤 5: 关闭 Sentry
+     */
     @Override
     protected void shutdown() {
         long startTime = System.currentTimeMillis();
         String threadName = Thread.currentThread().getName();
-        
+
         HYTALE_LOGGER.atInfo().log("Hycompanion shutdown() starting on thread: " + threadName);
 
         if (logger != null) {
@@ -511,9 +548,11 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Initialize socket connection to backend
+     * 初始化与后端的 Socket.IO 连接
+     * 创建 SocketManager，注册重连回调，建立 ChatHandler 与 SocketManager 的双向关联
      */
     private void initializeSocketConnection() {
+        // 创建服务器信息用于握手认证
         ServerInfo serverInfo = new ServerInfo(
                 VERSION,
                 getOnlinePlayerCount());
@@ -530,10 +569,10 @@ public class HycompanionEntrypoint extends JavaPlugin {
                 config,
                 hytaleAPI);
 
-        // Register callback for post-reconnection entity discovery
+        // 注册重连后实体发现的回调
         socketManager.setOnReconnectSyncComplete(this::runEntityDiscoveryAfterReconnect);
 
-        // Wire up ChatHandler and SocketManager (bidirectional)
+        // 建立 ChatHandler 与 SocketManager 的双向关联
         chatHandler.setSocketManager(socketManager);
         socketManager.setChatHandler(chatHandler);
 
@@ -542,7 +581,7 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Copy default config.yml from resources if it doesn't exist
+     * 从资源文件中复制默认的 config.yml（如果尚不存在）
      */
     private void copyDefaultConfig() {
         Path configPath = dataFolder.resolve("config.yml");
@@ -561,28 +600,29 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Register event listeners with Hytale event system
+     * 向 Hytale 事件系统注册事件监听器
+     * 主要注册玩家聊天事件，当玩家发送消息时检测附近 NPC 并转发到后端
      */
     private void registerEventListeners() {
         EventRegistry eventRegistry = getEventRegistry();
         logger.info("Registering event listeners...");
 
-        // Register player chat event listener for NPC interactions
+        // 注册玩家聊天事件监听器，用于 NPC 交互
         eventRegistry.registerGlobal(PlayerChatEvent.class, event -> {
             try {
-                // Get player information
+                // 获取玩家信息
                 String playerUuid = event.getSender().getUuid().toString();
                 String playerName = event.getSender().getUsername();
                 String message = event.getContent();
 
-                // Skip if message is empty or starts with command prefix
+                // 跳过空消息或以 "/" 开头的命令
                 if (message == null || message.isEmpty() || message.startsWith("/")) {
                     return;
                 }
 
                 logger.debug("Player chat: " + playerName + " -> " + message);
 
-                // Get player location from their transform
+                // 从玩家的 Transform 组件获取位置坐标
                 com.hypixel.hytale.math.vector.Transform playerTransform = event.getSender().getTransform();
                 com.hypixel.hytale.math.vector.Vector3d playerPos = playerTransform.getPosition();
 
@@ -592,15 +632,15 @@ public class HycompanionEntrypoint extends JavaPlugin {
                         playerPos.getZ(),
                         hytaleAPI.getWorldName());
 
-                // Create player object for chat handler
+                // 创建 GamePlayer 对象供聊天处理器使用
                 dev.hycompanion.plugin.api.GamePlayer gamePlayer = new dev.hycompanion.plugin.api.GamePlayer(
                         playerUuid,
                         playerName,
                         event.getSender().getUuid(),
                         playerLocation);
 
-                // Use ChatHandler which already handles NPC proximity detection
-                // It uses config.gameplay().chatRange() to find nearby NPCs
+                // 使用 ChatHandler 处理聊天（内置 NPC 靠近检测逻辑）
+                // 使用 config.gameplay().chatRange() 查找附近的 NPC
                 boolean handled = chatHandler.handleChat(gamePlayer, message);
 
                 if (handled) {
@@ -618,7 +658,8 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Register plugin commands with Hytale command system
+     * 向 Hytale 命令系统注册插件命令
+     * 注册 /hycompanion 命令（别名：/hyc、/hc）
      */
     private void registerCommands() {
         logger.info("Registering commands...");
@@ -627,7 +668,7 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Get current online player count from Hytale server
+     * 从 Hytale 服务器获取当前在线玩家数量
      */
     private int getOnlinePlayerCount() {
         try {
@@ -638,8 +679,9 @@ public class HycompanionEntrypoint extends JavaPlugin {
         }
     }
 
-    // ========== Getters ==========
+    // ========== 访问器方法 ==========
 
+    /** 获取插件配置 */
     public PluginConfig getPluginConfig() {
         return config;
     }
@@ -672,49 +714,44 @@ public class HycompanionEntrypoint extends JavaPlugin {
         return dataFolder;
     }
 
-    // ========== Event Handlers ==========
+    // ========== 事件处理器 ==========
 
     /**
-     * Called when Hytale finishes loading/reloading all NPC entities.
-     * This is the perfect time to discover and bind existing NPC entities
-     * that were persisted from previous sessions.
-     * 
-     * IMPORTANT: Always forces rediscovery because entity references may have
-     * been invalidated by the reload. This handles both:
-     * - Initial startup (first discovery)
-     * - Reconnection (role file changes trigger entity reload, invalidating
-     * references)
+     * 当 Hytale 完成加载/重载所有 NPC 实体时调用
+     * 这是发现和绑定上次会话中持久化的 NPC 实体的最佳时机。
+     *
+     * 重要：始终强制重新发现，因为实体引用可能在重载后失效。
+     * 处理以下两种情况：
+     * - 首次启动（初始发现）
+     * - 重连后（角色文件变更触发实体重载，导致引用失效）
      */
     private void onAllNpcsLoaded(AllNPCsLoadedEvent event) {
         logger.info("AllNPCsLoadedEvent received - scheduling entity discovery...");
         logger.info("  Total NPCs in server: " + event.getAllNPCs().size());
         logger.info("  NPCs loaded this cycle: " + event.getLoadedNPCs().size());
 
-        // Always force rediscovery when this event fires, as entity references
-        // may have been invalidated by the reload (e.g., after role file changes
-        // during reconnection). This ensures we always have fresh entity references.
+        // 此事件触发时始终强制重新发现，因为实体引用可能在重载后失效
+        // （例如重连期间角色文件变更后）。确保始终拥有新鲜的实体引用。
         scheduleEntityDiscovery("NPCsLoaded", 2000, true);
     }
 
     /**
-     * Called when a player is added to a world.
-     * Fallback discovery trigger if AllNPCsLoadedEvent didn't find entities.
+     * 当玩家加入世界时调用
+     * 作为 AllNPCsLoadedEvent 未找到实体时的备用发现触发器
+     * 同时向管理员玩家显示 API 密钥未配置或需要重启的提示消息
      */
     private void onPlayerAddedToWorld(AddPlayerToWorldEvent event) {
 
-        // Get Player entity component to check permissions
+        // 获取 Player 实体组件以检查权限
         Player player = event.getHolder().getComponent(Player.getComponentType());
         boolean isAdmin = player != null && (player.hasPermission("*") || player.hasPermission("hycompanion.admin"));
 
-        // Check if API key is not set (null, empty, or default value)
+        // 检查 API 密钥是否未设置（为空、null 或默认值）
         String apiKey = config.connection().apiKey();
         boolean isKeySet = apiKey != null && !apiKey.trim().isEmpty() && !"YOUR_SERVER_API_KEY".equals(apiKey);
 
         if (!isKeySet && isAdmin) {
-            // Check if player is admin/op (has wildcard permission or specific register
-            // permission)
-            // Note: Hytale players implement PermissionHolder, but isOp() is not available
-            // directly
+            // 向管理员玩家发送 API 密钥未配置的提示消息
             player.sendMessage(
                     Message.raw("Hycompanion API key not set. Please use /hycompanion register [key] to set it.")
                             .color("#FF5555"));
@@ -722,7 +759,7 @@ public class HycompanionEntrypoint extends JavaPlugin {
                     .color("#AAAAAA"));
         }
 
-        // Check if manifest was created this session (restart required for NPC roles)
+        // 检查本次会话是否创建了新的资产包清单（需要重启服务器才能应用 NPC 角色）
         if (roleGenerator != null && roleGenerator.isManifestCreatedThisSession() && isAdmin) {
             player.sendMessage(Message.raw("").color("#FF5555"));
             player.sendMessage(
@@ -737,8 +774,8 @@ public class HycompanionEntrypoint extends JavaPlugin {
             player.sendMessage(Message.raw("").color("#FF5555"));
         }
 
-        // Validate existing NPCs and trigger rediscovery if needed
-        // This handles cases where entity references became stale after player disconnects
+        // 验证现有 NPC 并在需要时触发重新发现
+        // 处理玩家断开连接后实体引用变为陈旧的情况
         if (entityDiscoveryDone) {
             boolean hasValidNpcs = validateAndRediscoverIfNeeded();
             if (hasValidNpcs) {
@@ -757,13 +794,12 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Handle player disconnect to clear NPC follow targets.
-     * This prevents "Invalid entity reference" errors during server shutdown
-     * when NPCs have references to player entities that are being removed.
-     * 
-     * Note: During server shutdown, this event fires on ShutdownThread, not WorldThread.
-     * Hytale entity APIs require WorldThread, so we use safe clear that doesn't access
-     * entity APIs during shutdown.
+     * 处理玩家断开连接事件 - 清除 NPC 跟随目标
+     *
+     * 防止服务器关闭时 NPC 持有已移除玩家实体的引用导致"无效实体引用"错误。
+     *
+     * 注意：服务器关闭期间此事件在 ShutdownThread 上触发（非 WorldThread）。
+     * Hytale 实体 API 需要 WorldThread，因此关闭时使用安全清理（不访问实体 API）。
      */
     private void onPlayerDisconnect(PlayerDisconnectEvent event) {
         try {
@@ -777,13 +813,13 @@ public class HycompanionEntrypoint extends JavaPlugin {
             boolean isWorldThread = threadName.contains("WorldThread");
             
             if (isWorldThread) {
-                // Normal disconnect - can use full cleanup with entity APIs
+                // 正常断开 - 可以使用完整的实体 API 清理
                 logger.debug("Player disconnecting: " + playerName + " - clearing NPC follow targets");
                 if (hytaleAPI != null) {
                     ((HytaleServerAdapter) hytaleAPI).clearFollowTargetsForPlayer(playerName);
                 }
             } else {
-                // Shutdown disconnect - can only clear from our maps, not access Hytale APIs
+                // 关闭期间断开 - 只能清除内部映射，不能访问 Hytale API
                 logger.debug("Player disconnecting on " + threadName + " - safe clearing only");
                 if (hytaleAPI != null) {
                     // Use safe clear that doesn't access Hytale entity APIs
@@ -795,28 +831,27 @@ public class HycompanionEntrypoint extends JavaPlugin {
         }
     }
 
-    // Guard to prevent duplicate early cleanup
+    // 防止重复执行早期清理的守卫标志
     private volatile boolean earlyShutdownDone = false;
 
     /**
-     * Handle server shutdown event - triggered early in shutdown sequence.
-     * Priority -48 = DISCONNECT_PLAYERS phase - runs BEFORE players are removed.
-     * 
-     * CRITICAL: We do as little as possible here to avoid interfering with Hytale's
-     * shutdown sequence. Specifically, we do NOT clear entity references because
-     * doing so can cause "Invalid entity reference" errors that break Hytale's
-     * player removal and chunk saving.
-     * 
-     * The only things we do here:
-     * 1. Disconnect from backend (stop incoming events)
-     * 2. Stop our periodic background tasks
-     * 3. Set the shutdown flag (without blocking world operations)
+     * 处理服务器关闭事件 - 在关闭序列的早期���段触发
+     * 优先级 -48 = DISCONNECT_PLAYERS 阶段 - 在玩家被移除之前运行
+     *
+     * 关键：此处尽量少做操作，避免干扰 Hytale 的关闭序列。
+     * 特别是不清除实体引用，因为这会导致"无效实体引用"错误，
+     * 破坏 Hytale 的玩家移除和区块保存流程。
+     *
+     * 此处仅执行：
+     * 1. 断开后端连接（停止接收���件）
+     * 2. 停止定期后台任���
+     * 3. 设置关闭标志（不阻止世界操作）
      */
     private void onServerShutdown(ShutdownEvent event) {
         long startTime = System.currentTimeMillis();
         String threadName = Thread.currentThread().getName();
         
-        // Prevent duplicate execution
+        // 防止重复执行
         if (earlyShutdownDone) {
             logger.debug("[Shutdown] Early cleanup already done, skipping (thread: " + threadName + ")");
             return;
@@ -877,29 +912,28 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Run entity discovery after reconnection.
-     * Called by SocketManager after bulk sync completes on reconnect.
+     * 重连后运行实体发现
+     * 由 SocketManager 在重连后批量同步完成时调用
      */
     private void runEntityDiscoveryAfterReconnect() {
         scheduleEntityDiscovery("Reconnect", 2000, true);
     }
 
-    // ========== Unified Entity Discovery ==========
+    // ========== 统一实体发现机制 ==========
 
     /**
-     * Schedule entity discovery with configurable delay and behavior.
-     * 
-     * This unified method handles all discovery triggers:
-     * - Startup: After AllNPCsLoadedEvent, waits for entity reload
-     * - PlayerJoin: When first player joins, waits for chunks to load
-     * - Reconnect: After backend reconnection, always runs (bypasses
-     * entityDiscoveryDone)
-     * 
-     * @param trigger  Human-readable label for logging
-     * @param delayMs  Milliseconds to wait before discovery (allows Hytale to
-     *                 finish loading)
-     * @param forceRun If true, runs even if entityDiscoveryDone is true (for
-     *                 reconnect)
+     * 调度实体发现任务（可配置延迟和行为）
+     *
+     * 统一处理所有发现触发器：
+     * - 启动时：AllNPCsLoadedEvent 后，等待实体重载完成
+     * - 玩家加入：首个玩家加入时，等待区块加载
+     * - 重连后：后端重连后，始终运行（跳过 entityDiscoveryDone 检查��
+     *
+     * 使用虚拟线程异步执行，避免阻塞主线程。
+     *
+     * @param trigger  触发来源标签（用于日志记录）
+     * @param delayMs  发现前等待的毫秒数（给 Hytale 时间完成加载）
+     * @param forceRun 如果为 true，即使 entityDiscoveryDone 为 true 也运行（用于重���）
      */
     private void scheduleEntityDiscovery(String trigger, long delayMs, boolean forceRun) {
         if (npcManager == null || hytaleAPI == null) {
@@ -934,17 +968,15 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Execute entity discovery synchronously (call from virtual thread).
-     * Scans all synced NPCs and binds their entity references.
-     * 
-     * @param trigger Label for logging context
-     * @return Discovery results [discovered, alreadyValid, failed]
+     * 同步执行实体发现（从虚拟线程调用）
+     * 扫描所有已同步的 NPC，在游戏世界中查找并绑定其实体引用
+     *
+     * @param trigger 触发来源标签（用于日志记录）
+     * @return 发现结果数组 [已发现数, 已有效数, 失败数]
      */
     private int[] runEntityDiscoveryNow(String trigger) {
-        // CLEANUP: Remove "Zombie" thinking indicators from previous session/crash
-        // This must be done BEFORE discovery to ensure we don't accidentally remove
-        // active ones
-        // (though the method has safeguards for that too)
+        // 清理：移除上次会话/崩溃残留的"思考中"指示器
+        // 必须在发现之前完成，以免意外移除活动中的指示器
         if (hytaleAPI != null) {
             hytaleAPI.removeZombieThinkingIndicators();
         }
@@ -956,7 +988,7 @@ public class HycompanionEntrypoint extends JavaPlugin {
         int failed = 0;
 
         Set<String> npcIdAnimationsSent = new HashSet<>();
-        // Loop over defined NPCs to find their instances in the world
+        // ��历所有已定义的 NPC，在世界中查找并绑定其实体实例
         for (dev.hycompanion.plugin.core.npc.NpcData npcData : npcManager.getAllNpcs()) {
             try {
                 // Discover existing instances for this role
@@ -1007,15 +1039,13 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Validate that tracked NPC entities are still valid.
-     * If no valid NPCs are found, trigger a rediscovery.
-     * This is called periodically and on player join to ensure NPCs are always trackable.
-     * 
-     * Note: This handles partial staleness - even if some NPCs are valid, we still
-     * trigger rediscovery to ensure ALL NPCs are properly tracked (some might be
-     * in unloaded chunks or have stale references while others don't).
-     * 
-     * @return true if valid NPCs exist (rediscovery may still have been triggered for missing ones)
+     * 验证已追踪的 NPC 实体是否仍然有效
+     * 如果未找到有效的 NPC，触发重新发现
+     *
+     * 在玩家加入时调用，确保 NPC 始终可追踪。
+     * 处理部分陈旧的情况 - 即使部分 NPC 有效，仍会触发重新发现以确保所有 NPC 都被正确追踪。
+     *
+     * @return 如果存在有效的 NPC 则返回 true（可能仍触发了重新发现）
      */
     public boolean validateAndRediscoverIfNeeded() {
         if (hytaleAPI == null || npcManager == null) {
@@ -1023,7 +1053,7 @@ public class HycompanionEntrypoint extends JavaPlugin {
             return false;
         }
 
-        // Check validity of all tracked NPC instances
+        // 检查所有已追踪 NPC 实例的有效性
         var npcInstances = hytaleAPI.getNpcInstances();
         int validCount = 0;
         int invalidCount = 0;
@@ -1039,10 +1069,10 @@ public class HycompanionEntrypoint extends JavaPlugin {
 
         logger.debug("[Validation] NPC validation: " + validCount + " valid, " + invalidCount + " invalid/stale");
 
-        // Trigger rediscovery if:
-        // 1. No valid NPCs at all, OR
-        // 2. Some NPCs are invalid (partial staleness - could be due to chunk unloading, respawn, etc.)
-        // 3. We have fewer valid instances than expected NPC types (some NPCs never got discovered)
+        // 在以下情况触发重新发现：
+        // 1. 完全没有有效 NPC
+        // 2. 存在无效 NPC（部分陈旧 - 可能因区块卸载、重生等）
+        // 3. 有效实例数少于预期的 NPC 类型数（某些 NPC 从未被发现）
         boolean needsRediscovery = validCount == 0 || invalidCount > 0 || validCount < totalExpected;
 
         if (needsRediscovery) {
@@ -1059,10 +1089,10 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Report available animations for an NPC to the backend.
-     * This enables dynamic MCP tool generation based on the NPC's model animations.
-     * 
-     * @param npcInstanceData The NPC instance data
+     * 向后端报告 NPC 可用的动画列表
+     * 后端根据 NPC 模型的动画动态生成 MCP 工具
+     *
+     * @param npcInstanceData NPC 实例数据
      */
     private void reportNpcAnimations(dev.hycompanion.plugin.core.npc.NpcInstanceData npcInstanceData) {
         if (socketManager == null || !socketManager.isConnected()) {
@@ -1081,14 +1111,18 @@ public class HycompanionEntrypoint extends JavaPlugin {
         }
     }
 
+    /**
+     * 更新 config.yml 中的 API 密钥并重新加载配置
+     * @param newApiKey 新的 API 密钥
+     */
     public void updateApiKey(String newApiKey) {
         try {
             Path configPath = dataFolder.resolve("config.yml");
-            // Use shared helper to update file
+            // 使用共享辅助方法更新配置文件
             PluginConfig.updateApiKeyInFile(configPath, newApiKey);
             logger.info("API Key updated in config.yml");
 
-            // Reload just the config and update socket auth without full re-init
+            // 仅重新加载配置并更新 Socket 认证，无需完全重新初始化
             reload();
 
         } catch (IOException e) {
@@ -1096,6 +1130,10 @@ public class HycompanionEntrypoint extends JavaPlugin {
         }
     }
 
+    /**
+     * 重新加载配置并更新各组件
+     * 热重载：无需重启插件即可应用新配置
+     */
     public void reload() {
         if (logger != null)
             logger.info("Reloading Hycompanion...");
@@ -1133,12 +1171,10 @@ public class HycompanionEntrypoint extends JavaPlugin {
     }
 
     /**
-     * Manually trigger entity rediscovery. Called by /hycompanion rediscover
-     * command.
-     * Runs synchronously on a virtual thread and returns results.
-     * 
-     * @param resultCallback Callback with results [discovered, alreadyValid,
-     *                       failed], or null on error
+     * 手动触发实体重新发现 - 由 /hycompanion rediscover 命令调用
+     * 在虚拟线程上同步运行，通过回调返回结果
+     *
+     * @param resultCallback 结果回调，参数为 [已发现数, 已有效数, 失败数]，出错时为 null
      */
     public void triggerManualRediscovery(java.util.function.Consumer<int[]> resultCallback) {
         if (npcManager == null || hytaleAPI == null) {

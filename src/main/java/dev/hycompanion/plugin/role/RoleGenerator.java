@@ -13,34 +13,66 @@ import java.nio.file.Path;
 import java.util.Iterator;
 
 /**
- * Generates Hytale NPC Role JSON files from NPC data.
- * 
- * This class manages role file generation and caching:
- * - During setup(): Loads cached roles from previous runs
- * - During runtime: Generates/updates role files after NPC sync via socket
- * - Role files are cached for next startup
+ * Hytale NPC角色JSON文件生成器
+ *
+ * 管理角色文件的生成和缓存：
+ * - 启动阶段（setup）：加载上次运行缓存的角色文件
+ * - 运行时：通过Socket同步NPC后生成/更新角色文件
+ * - 角色文件会被缓存以供下次启动使用
  */
 public class RoleGenerator {
 
+    /** 美化输出的Gson实例 */
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
+    /** 角色JSON文件的输出目录（Hytale资源包路径） */
     private final Path rolesDirectory;
+    /** 角色缓存目录（插件数据目录下） */
     private final Path cacheDirectory;
+    /** 模组根目录（包含manifest.json） */
     private final Path modDirectory;
+    /** 额外的角色输出目录（UserData/Mods/HycompanionRoles），引擎优先加载 */
+    private final Path extraRolesDirectory;
     private final PluginLogger logger;
+    /** 标记本次会话是否新创建了manifest.json */
     private boolean manifestCreatedThisSession = false;
 
+    /**
+     * 构造角色生成器
+     *
+     * @param modDirectory 模组根目录
+     * @param dataFolder   插件数据目录
+     * @param logger       日志器
+     */
     public RoleGenerator(Path modDirectory, Path dataFolder, PluginLogger logger) {
         this.modDirectory = modDirectory;
         this.rolesDirectory = modDirectory.resolve("Server").resolve("NPC").resolve("Roles");
         this.cacheDirectory = dataFolder.resolve("role_cache");
         this.logger = logger;
+
+        // 引擎优先加载 UserData/Mods/ 下的资源包，需要同步写入
+        // 通过遍历路径查找 "Saves" 目录来定位 UserData
+        Path extraDir = null;
+        Path current = modDirectory.toAbsolutePath();
+        while (current != null) {
+            if (current.getFileName() != null && "Saves".equals(current.getFileName().toString())) {
+                // current = .../UserData/Saves, parent = .../UserData
+                Path userDataDir = current.getParent();
+                if (userDataDir != null) {
+                    extraDir = userDataDir.resolve("Mods").resolve("HycompanionRoles")
+                            .resolve("Server").resolve("NPC").resolve("Roles");
+                }
+                break;
+            }
+            current = current.getParent();
+        }
+        this.extraRolesDirectory = extraDir;
     }
 
     /**
-     * Ensure the mod folder has a manifest.json so Hytale loads it as an asset
-     * pack.
-     * This is required for dynamic role files to be loaded.
+     * 确保模组目录下存在 manifest.json，使Hytale将其识别为资源包
+     * 这是动态角色文件能被加载的前提条件
+     * 如果manifest不存在则创建，已存在则验证/更新关键字段
      */
     public void ensureModManifest() {
         Path manifestPath = modDirectory.resolve("manifest.json");
@@ -91,6 +123,12 @@ public class RoleGenerator {
         }
     }
 
+    /**
+     * 从插件自身的manifest.json中解析目标服务器版本号
+     * 用于在资源包manifest中设置ServerVersion字段
+     *
+     * @return 服务器版本字符串，解析失败时返回通配符 "*"
+     */
     private String resolveServerVersionFromPluginManifest() {
         try (var in = RoleGenerator.class.getClassLoader().getResourceAsStream("manifest.json")) {
             if (in == null) {
@@ -114,33 +152,27 @@ public class RoleGenerator {
     }
 
     /**
-     * Check if the manifest was created during this session.
-     * If true, the server needs a restart to load NPC roles.
+     * 检查本次会话是否新创建了manifest.json
+     * 如果是，则服务器需要重启才能加载NPC角色
      */
     public boolean isManifestCreatedThisSession() {
         return manifestCreatedThisSession;
     }
 
     /**
-     * Load cached role files from previous run.
-     * Called during setup() before asset loading.
-     * 
-     * NOTE: Hytale Server dynamically loads NPC roles from the asset pack on
-     * startup.
-     * This means role files added AFTER the manifest.json exists will be loaded
-     * automatically on the next server restart - no special caching/restart logic
-     * needed.
-     * 
-     * The only time a "restart required" message is shown is when manifest.json is
-     * first created, as Hytale needs to discover the new asset pack.
-     * 
-     * @return Number of cached roles loaded
+     * 从上次运行的缓存中加载角色文件
+     * 在setup()阶段、资源加载之前调用
+     *
+     * 注意：Hytale服务器在启动时会自动从资源包加载NPC角色。
+     * 只要manifest.json已存在，之后添加的角色文件会在下次重启时自动加载。
+     * 仅当manifest.json首次创建时才需要显示"需要重启"的提示。
+     *
+     * @return 加载的缓存角色数量
      */
-
     public int loadCachedRoles() {
         logger.info("Loading cached role files from previous run...");
 
-        // Ensure the mod folder has a manifest for asset loading
+        // 确保模组目录有manifest文件以支持资源加载
         ensureModManifest();
 
         try {
@@ -149,16 +181,24 @@ public class RoleGenerator {
                 return 0;
             }
 
-            // Create roles directory if needed
+            // 如果角色目录不存在则创建
             Files.createDirectories(rolesDirectory);
+            if (extraRolesDirectory != null) {
+                Files.createDirectories(extraRolesDirectory);
+            }
 
-            // Copy cached roles to assets directory
+            // 将缓存的角色文件复制到资源目录（两个位置）
             int copied = 0;
             try (var stream = Files.list(cacheDirectory)) {
                 for (Path cachedFile : stream.toList()) {
                     if (cachedFile.toString().endsWith(".json")) {
                         Path targetFile = rolesDirectory.resolve(cachedFile.getFileName());
                         Files.copy(cachedFile, targetFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        // 同时写入引擎优先加载的目录
+                        if (extraRolesDirectory != null) {
+                            Path extraFile = extraRolesDirectory.resolve(cachedFile.getFileName());
+                            Files.copy(cachedFile, extraFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        }
                         copied++;
                         logger.debug("Loaded cached role: " + cachedFile.getFileName());
                     }
@@ -179,23 +219,24 @@ public class RoleGenerator {
     }
 
     /**
-     * Fetch roles via Socket.IO during setup phase (synchronous with timeout).
-     * This runs BEFORE asset loading to ensure roles are up-to-date.
-     * 
-     * @param backendUrl     The backend URL (e.g., http://192.168.1.169:3000)
-     * @param apiKey         The server API key
-     * @param timeoutSeconds Timeout for socket connection
-     * @return Number of roles fetched and generated
+     * 在启动阶段通过Socket.IO同步获取角色数据（带超时的同步操作）
+     * 在资源加载之前运行，确保角色定义是最新的
+     *
+     * @param backendUrl     后端URL（如 http://192.168.1.169:3000）
+     * @param apiKey         服务器API密钥
+     * @param timeoutSeconds 连接超时时间（秒）
+     * @return 获取并生成的角色数量
      */
     public int fetchRolesViaSocket(String backendUrl, String apiKey, int timeoutSeconds) {
         logger.info("Fetching NPC roles via socket from backend...");
 
+        // 使用CountDownLatch同步等待异步Socket操作完成
         var latch = new java.util.concurrent.CountDownLatch(1);
         var rolesGenerated = new java.util.concurrent.atomic.AtomicInteger(0);
         var connectionError = new java.util.concurrent.atomic.AtomicReference<String>(null);
 
         try {
-            // Create socket connection
+            // 创建Socket连接（仅用于角色获取，不重连）
             io.socket.client.IO.Options options = io.socket.client.IO.Options.builder()
                     .setAuth(java.util.Map.of("apiKey", apiKey))
                     .setReconnection(false)
@@ -204,10 +245,10 @@ public class RoleGenerator {
 
             io.socket.client.Socket socket = io.socket.client.IO.socket(java.net.URI.create(backendUrl), options);
 
-            // Handle connection
+            // 处理连接成功事件
             socket.on(io.socket.client.Socket.EVENT_CONNECT, args -> {
                 logger.debug("Socket connected for role fetch");
-                // Send connect event to trigger NPC sync
+                // 发送连接事件以触发后端NPC同步
                 var payload = new org.json.JSONObject();
                 try {
                     payload.put("apiKey", apiKey);
@@ -221,7 +262,7 @@ public class RoleGenerator {
                 socket.emit("PLUGIN_CONNECT", payload);
             });
 
-            // Handle NPC sync
+            // 处理NPC同步事件 - 接收后端推送的NPC数据并生成角色文件
             socket.on("BACKEND_NPC_SYNC", args -> {
                 try {
                     org.json.JSONObject json = (org.json.JSONObject) args[0];
@@ -240,13 +281,13 @@ public class RoleGenerator {
                 }
             });
 
-            // Handle sync complete (or timeout will trigger)
+            // 处理同步完成信号（超时也会触发闭锁释放）
             socket.on("BACKEND_SYNC_COMPLETE", args -> {
                 logger.debug("Sync complete signal received");
                 latch.countDown();
             });
 
-            // Handle errors
+            // 处理连接错误
             socket.on(io.socket.client.Socket.EVENT_CONNECT_ERROR, args -> {
                 String error = args.length > 0 ? args[0].toString() : "Unknown error";
                 connectionError.set(error);
@@ -254,13 +295,13 @@ public class RoleGenerator {
                 latch.countDown();
             });
 
-            // Connect
+            // 发起连接
             socket.connect();
 
-            // Wait for sync with timeout
+            // 带超时等待同步完成
             boolean completed = latch.await(timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
 
-            // Disconnect
+            // 断开连接并清理
             socket.disconnect();
             socket.close();
 
@@ -289,28 +330,40 @@ public class RoleGenerator {
     }
 
     /**
-     * Generate a role file for a single NPC and cache it.
-     * Called after NPC sync via socket.
-     * 
-     * @return true if role file was generated successfully
+     * 为单个NPC生成角色文件并缓存
+     * 在Socket同步NPC数据后调用
+     * 同时写入资源目录（当前运行）和缓存目录（下次启动）
+     *
+     * @return 是否成功生成角色文件
      */
     public boolean generateAndCacheRole(NpcRoleData npc) {
         try {
-            // Create directories if needed
+            // 确保输出目录存在
             Files.createDirectories(rolesDirectory);
             Files.createDirectories(cacheDirectory);
 
-            // Generate role JSON
+            // 生成角色JSON
             JsonObject role = buildRoleJson(npc);
             String jsonContent = GSON.toJson(role);
 
-            // Write to assets directory (for current run if asset reloading is supported)
+            // 写入资源目录（供当前运行使用，如果支持热重载）
             Path roleFile = rolesDirectory.resolve(npc.externalId + ".json");
             boolean updated = writeIfChanged(roleFile, jsonContent);
 
-            // Also cache for next startup
+            // 同时缓存以供下次启动使用
             Path cacheFile = cacheDirectory.resolve(npc.externalId + ".json");
             writeIfChanged(cacheFile, jsonContent);
+
+            // 写入引擎优先加载的 HycompanionRoles 目录
+            if (extraRolesDirectory != null) {
+                try {
+                    Files.createDirectories(extraRolesDirectory);
+                    Path extraFile = extraRolesDirectory.resolve(npc.externalId + ".json");
+                    writeIfChanged(extraFile, jsonContent);
+                } catch (IOException ex) {
+                    logger.warn("Failed to write to extra roles directory: " + ex.getMessage());
+                }
+            }
 
             if (updated) {
                 logger.info("Generated and cached role for: " + npc.externalId + " with presets: " + 
@@ -327,6 +380,11 @@ public class RoleGenerator {
         }
     }
 
+    /**
+     * 仅在内容发生变化时写入文件，避免不必要的I/O操作
+     *
+     * @return 如果文件被写入则返回true
+     */
     private boolean writeIfChanged(Path path, String content) throws IOException {
         if (Files.exists(path)) {
             String existing = Files.readString(path);
@@ -343,8 +401,8 @@ public class RoleGenerator {
     }
 
     /**
-     * Remove a role file and its cache.
-     * Called when NPC is deleted.
+     * 删除角色文件及其缓存
+     * 在NPC被删除时调用
      */
     public void removeRole(String externalId) {
         try {
@@ -361,9 +419,11 @@ public class RoleGenerator {
     }
 
     /**
-     * Build role JSON object for a given NPC.
-     * Supports both new inheritance system (Variant/Abstract) and legacy flat
-     * format.
+     * 为指定NPC构建角色JSON对象
+     * 根据角色类型和引用模板选择不同的构建策略：
+     * - Hycompanion模板的Variant -> 使用Generic格式（支持DisplayNames）
+     * - 其他Variant -> 使用继承格式（Type/Reference/Modify）
+     * - Abstract/Legacy -> 完整角色定义
      */
     private JsonObject buildRoleJson(NpcRoleData npc) {
         logger.info("Building Role JSON for " + npc.displayName + " | RoleType: " + npc.roleType +
@@ -391,24 +451,20 @@ public class RoleGenerator {
     }
 
     /**
-     * Build a Generic role JSON based on Template_Hycompanion_NPC structure.
-     * Generic roles are fully standalone and support DisplayNames as a root
-     * property.
-     * This is used instead of Variant when we need features that Variant doesn't
-     * support.
+     * 基于 Template_Hycompanion_NPC 结构构建Generic角色JSON
+     * Generic角色是完全独立的，支持在根级别设置DisplayNames
+     * 当需要Variant不支持的特性时使用此方法代替Variant
      */
     private JsonObject buildGenericRoleJson(NpcRoleData npc) {
         JsonObject role = new JsonObject();
 
-        // Type: Generic for standalone spawnable role
+        // 类型：Generic，表示独立可生成的角色
         role.addProperty("Type", "Generic");
 
-        // State configuration
-        role.addProperty("StartState", "Idle");
-        role.addProperty("DefaultSubState", "Default");
+        // Generic角色不使用状态机（StartState/DefaultSubState/State sensor 均无效）
+        // 参考: 原版 Test_Separation_Seek.json — 纯 Generic + Seek，无任何 State 字段
 
-        // Appearance - direct value (not computed since Generic doesn't use Parameters
-        // the same way)
+        // 外观设置 - 直接赋值（Generic不像Variant那样使用Parameters计算）
         String appearance = getParameterStringValue(npc.parameters, "Appearance", npc.appearance);
         role.addProperty("Appearance", appearance != null ? appearance : "Outlander");
 
@@ -438,8 +494,7 @@ public class RoleGenerator {
             role.addProperty("DropList", dropList);
         }
 
-        // DisplayNames - ROOT LEVEL property (this is why we use Generic instead of
-        // Variant!)
+        // DisplayNames - 根级别属性（这就是我们使用Generic而非Variant的原因！）
         com.google.gson.JsonArray displayNamesArray = new com.google.gson.JsonArray();
         if (npc.displayNames != null && npc.displayNames.length > 0) {
             for (String name : npc.displayNames) {
@@ -452,8 +507,7 @@ public class RoleGenerator {
             role.add("DisplayNames", displayNamesArray);
         }
 
-        // Physics & behavior properties from template
-        // Physics & behavior properties from template or NpcRoleData
+        // 物理和行为属性 - 来自模板或NpcRoleData默认值
         role.addProperty("Invulnerable", npc.invulnerable);
         role.addProperty("ApplyAvoidance", npc.applyAvoidance);
         role.addProperty("ApplySeparation", npc.applySeparation);
@@ -488,10 +542,10 @@ public class RoleGenerator {
             role.addProperty("CollisionRadius", -1);
         }
 
-        // MotionControllerList
+        // 运动控制器列表 - 定义NPC的移动方式（行走、飞行、游泳等）
         com.google.gson.JsonArray motionControllers = new com.google.gson.JsonArray();
 
-        // Use custom motion controllers if defined, otherwise default
+        // 优先使用自定义运动控制器，否则使用默认配置
         if (npc.motionControllerList != null && npc.motionControllerList.length() > 0) {
             // Need to convert org.json.JSONArray to Gson JsonArray
             for (int i = 0; i < npc.motionControllerList.length(); i++) {
@@ -535,79 +589,40 @@ public class RoleGenerator {
         }
         role.add("MotionControllerList", motionControllers);
 
-        // Get FollowDistance from parameters or use default
+        // 获取跟随距离参数，默认为2.0格
         Double followDistance = getParameterDoubleValue(npc.parameters, "FollowDistance", 2.0);
 
-        // Check if "follow" preset is present
+        // 检查是否包含"follow"行为预设
         boolean hasFollowPreset = npc.behaviorPresets != null &&
                 java.util.Arrays.stream(npc.behaviorPresets).anyMatch(p -> "follow".equalsIgnoreCase(p));
 
-        // Instructions - Generate based on behavior presets
-        // Get FollowDistance from parameters (used if "follow" preset is present)
+        // 行为指令集 - 根据行为预设生成（idle、follow、wander等）
         com.google.gson.JsonArray instructions = generateBehaviorInstructions(npc.behaviorPresets, followDistance);
         role.add("Instructions", instructions);
 
-        // InteractionInstruction - Only add Follow state setter if "follow" preset is
-        // present
-        if (hasFollowPreset) {
-            JsonObject interactionInstruction = new JsonObject();
-            com.google.gson.JsonArray interactionInstructions = new com.google.gson.JsonArray();
-
-            JsonObject followTrigger = new JsonObject();
-
-            JsonObject sensor = new JsonObject();
-            sensor.addProperty("Type", "And");
-
-            com.google.gson.JsonArray sensors = new com.google.gson.JsonArray();
-
-            JsonObject idleState = new JsonObject();
-            idleState.addProperty("Type", "State");
-            idleState.addProperty("State", "Idle");
-            sensors.add(idleState);
-
-            JsonObject targetSensor = new JsonObject();
-            targetSensor.addProperty("Type", "Target");
-            sensors.add(targetSensor);
-
-            sensor.add("Sensors", sensors);
-            followTrigger.add("Sensor", sensor);
-
-            com.google.gson.JsonArray actions = new com.google.gson.JsonArray();
-            JsonObject stateAction = new JsonObject();
-            stateAction.addProperty("Type", "State");
-            stateAction.addProperty("State", "Follow");
-            actions.add(stateAction);
-
-            followTrigger.add("Actions", actions);
-            interactionInstructions.add(followTrigger);
-
-            interactionInstruction.add("Instructions", interactionInstructions);
-            role.add("InteractionInstruction", interactionInstruction);
-        }
+        // Generic角色不支持InteractionInstruction/State - 已移除
 
         return role;
     }
 
     /**
-     * Build a Variant role JSON that inherits from a parent template.
-     * Uses the simpler Type/Reference/Modify format.
-     * 
-     * IMPORTANT: Different templates have different parameters available.
-     * We can only modify parameters that exist in the parent template.
+     * 构建Variant角色JSON - 从父模板继承并覆盖部分属性
+     * 使用简洁的 Type/Reference/Modify 格式
+     *
+     * 重要：不同模板可用的参数不同，只能修改父模板中已存在的参数
      */
     private JsonObject buildVariantRoleJson(NpcRoleData npc) {
         JsonObject role = new JsonObject();
 
-        // Core inheritance fields
+        // 核心继承字段
         role.addProperty("Type", "Variant");
         role.addProperty("Reference", npc.reference);
 
-        // Build Modify block
-        // Values set here override the parent template's parameter values
-        // IMPORTANT: We can only modify parameters that exist in the parent template!
+        // 构建Modify块 - 覆盖父模板的参数值
+        // 重要：只能修改父模板中已存在的参数！
         JsonObject modify = new JsonObject();
 
-        // Determine which parameters exist in each template
+        // 判断各模板支持哪些参数
         boolean isIntelligentTemplate = "Template_Intelligent".equals(npc.reference);
         boolean isPredatorTemplate = "Template_Predator".equals(npc.reference);
         boolean isHycompanionTemplate = "Template_Hycompanion_NPC".equals(npc.reference);
@@ -696,8 +711,7 @@ public class RoleGenerator {
             }
         }
 
-        // Add user-specified parameters to Modify (these should already be validated in
-        // UI)
+        // 将用户自定义参数添加到Modify块（这些参数应已在UI端验证过）
         if (npc.parameters != null) {
             for (String key : npc.parameters.keySet()) {
                 // Skip parameters we've already handled
@@ -715,7 +729,7 @@ public class RoleGenerator {
             }
         }
 
-        // Add explicit modify values from backend (highest priority)
+        // 添加后端明确指定的覆盖值（最高优先级）
         if (npc.modify != null) {
             for (String key : npc.modify.keySet()) {
                 Object value = npc.modify.get(key);
@@ -740,12 +754,11 @@ public class RoleGenerator {
 
         }
 
-        // Add Modify block
+        // 添加Modify块
         role.add("Modify", modify);
 
-        // Parameters block - define our own parameters for referencing
-        // These parameters can be modified by child variants or referenced via {
-        // "Compute": "ParamName" }
+        // Parameters块 - 定义自有参数供引用
+        // 这些参数可被子Variant修改，或通过 {"Compute": "ParamName"} 引用
         JsonObject params = new JsonObject();
 
         // Appearance parameter - required for model
@@ -806,288 +819,43 @@ public class RoleGenerator {
     }
 
     /**
-     * Build an Abstract role JSON with full role definition.
-     * This is the legacy format that defines everything from scratch.
+     * 构建Abstract角色JSON - 完整的角色定义（旧版格式）
+     * 从零开始定义所有属性，不依赖父模板继承
      */
     private JsonObject buildAbstractRoleJson(NpcRoleData npc) {
-        JsonObject role = new JsonObject();
-
-        // Type for Abstract roles
-        role.addProperty("Type", "Abstract");
-
-        // If this is actually a legacy role without roleType, use Generic
-        if (npc.roleType == null || npc.roleType.isEmpty()) {
-            role.addProperty("Type", "Generic");
-        }
-
-        role.addProperty("MaxHealth", npc.maxHealth);
-
-        // Model
-        // Use "Appearance" for the model name/path
-        String modelPath = npc.modelPath != null && !npc.modelPath.isEmpty()
-                ? npc.modelPath
-                : (npc.appearance != null && !npc.appearance.isEmpty() ? npc.appearance : "Outlander");
-        role.addProperty("Appearance", modelPath);
-
-        if (npc.modelScale != null && npc.modelScale != 1.0) {
-            role.addProperty("ModelScale", npc.modelScale);
-        }
-
-        // Display names
-        com.google.gson.JsonArray displayNames = new com.google.gson.JsonArray();
-        if (npc.displayNames != null && npc.displayNames.length > 0) {
-            for (String name : npc.displayNames) {
-                displayNames.add(name);
-            }
-        } else if (npc.displayName != null && !npc.displayName.isEmpty()) {
-            displayNames.add(npc.displayName);
-        }
-        if (displayNames.size() > 0) {
-            role.add("DisplayNames", displayNames);
-        }
-
-        // NameTranslationKey (Required)
-        String nameTranslationKey = (npc.nameTranslationKey != null && !npc.nameTranslationKey.isEmpty())
-                ? npc.nameTranslationKey
-                : "server.npcRoles." + npc.externalId.toLowerCase() + ".name";
-        role.addProperty("NameTranslationKey", nameTranslationKey);
-
-        // NPC Groups
-        if (npc.npcGroups != null && npc.npcGroups.length > 0) {
-            com.google.gson.JsonArray groups = new com.google.gson.JsonArray();
-            for (String group : npc.npcGroups) {
-                groups.add(group);
-            }
-            role.add("NPCGroups", groups);
-        }
-
-        // State Configuration
-        String startState = (npc.startState != null && !npc.startState.isEmpty()) ? npc.startState : "Idle";
-        role.addProperty("StartState", startState);
-
-        String startSubState = (npc.startSubState != null && !npc.startSubState.isEmpty())
-                ? npc.startSubState
-                : "Default";
-        role.addProperty("DefaultSubState", startSubState);
-
-        // Physics & Attributes
-        role.addProperty("Invulnerable", npc.invulnerable);
-        role.addProperty("DefaultPlayerAttitude", npc.defaultPlayerAttitude);
-        role.addProperty("DefaultNPCAttitude", npc.defaultNPCAttitude);
-        role.addProperty("Inertia", npc.inertia);
-        role.addProperty("KnockbackScale", npc.knockbackScale);
-
-        // Crowd Control
-        role.addProperty("ApplyAvoidance", npc.applyAvoidance);
-        role.addProperty("ApplySeparation", npc.applySeparation);
-        role.addProperty("SeparationDistance", npc.separationDistance);
-
-        // Collision
-        if (npc.collisionDistance != null)
-            role.addProperty("CollisionDistance", npc.collisionDistance);
-        if (npc.collisionRadius != null)
-            role.addProperty("CollisionRadius", npc.collisionRadius);
-
-        // Environment
-        role.addProperty("BreathesInAir", npc.breathesInAir);
-        role.addProperty("BreathesInWater", npc.breathesInWater);
-        if (npc.stayInEnvironment != null)
-            role.addProperty("StayInEnvironment", npc.stayInEnvironment);
-
-        // Inventory defaults
-        role.addProperty("InventorySize", npc.inventorySize);
-        role.addProperty("HotbarSize", npc.hotbarSize);
-
-        if (npc.offHandSlots != null) {
-            role.addProperty("OffHandSlots", npc.offHandSlots);
-        }
-        if (npc.dropList != null && !npc.dropList.isEmpty()) {
-            role.addProperty("DropList", npc.dropList);
-        }
-        if (npc.pickupDropOnDeath != null) {
-            role.addProperty("PickupDropOnDeath", npc.pickupDropOnDeath);
-        }
-
-        // Hotbar Items
-        if (npc.hotbarItems != null && npc.hotbarItems.length > 0) {
-            com.google.gson.JsonArray hotbarItemsArray = new com.google.gson.JsonArray();
-            for (String item : npc.hotbarItems) {
-                hotbarItemsArray.add(item);
-            }
-            role.add("HotbarItems", hotbarItemsArray);
-        }
-
-        // OffHand Items
-        if (npc.offHandItems != null && npc.offHandItems.length > 0) {
-            com.google.gson.JsonArray offHandItemsArray = new com.google.gson.JsonArray();
-            for (String item : npc.offHandItems) {
-                offHandItemsArray.add(item);
-            }
-            role.add("OffHandItems", offHandItemsArray);
-        }
-
-        // Lifecycle
-        role.addProperty("DeathAnimationTime", npc.deathAnimationTime);
-        if (npc.despawnAnimationTime != null)
-            role.addProperty("DespawnAnimationTime", npc.despawnAnimationTime);
-        role.addProperty("SpawnLockTime", npc.spawnLockTime);
-
-        // Spawn Effects
-        if (npc.spawnParticles != null && !npc.spawnParticles.isEmpty())
-            role.addProperty("SpawnParticles", npc.spawnParticles);
-        if (npc.spawnViewDistance != null)
-            role.addProperty("SpawnViewDistance", npc.spawnViewDistance);
-
-        // Motion Controller List
-        com.google.gson.JsonArray motionControllers = new com.google.gson.JsonArray();
-
-        if (npc.motionControllers != null && !npc.motionControllers.isEmpty()) {
-            Iterator<String> keys = npc.motionControllers.keys();
-            while (keys.hasNext()) {
-                String key = keys.next();
-                org.json.JSONObject controllerData = npc.motionControllers.getJSONObject(key);
-                JsonObject controller = new JsonObject();
-
-                // Determine Type
-                String type = "Walk"; // Default
-                if (controllerData.has("type")) {
-                    type = controllerData.getString("type");
-                } else if (key.equalsIgnoreCase("walk") || key.equalsIgnoreCase("run")
-                        || key.equalsIgnoreCase("sprint")) {
-                    type = "Walk";
-                } else if (key.equalsIgnoreCase("fly")) {
-                    type = "Fly";
-                } else if (key.equalsIgnoreCase("swim") || key.equalsIgnoreCase("dive")) {
-                    type = "Dive"; // "Dive" is the Hytale type for swimming
-                }
-
-                controller.addProperty("Type", type);
-
-                // Common Properties
-                if (controllerData.has("acceleration"))
-                    controller.addProperty("Acceleration", controllerData.getDouble("acceleration"));
-
-                if (controllerData.has("maxRotationSpeed"))
-                    controller.addProperty("MaxRotationSpeed", controllerData.getDouble("maxRotationSpeed"));
-                else if (controllerData.has("turnSpeed"))
-                    controller.addProperty("MaxRotationSpeed", controllerData.getDouble("turnSpeed"));
-
-                // Type Specific Properties
-                switch (type) {
-                    case "Walk":
-                        if (controllerData.has("maxSpeed"))
-                            controller.addProperty("MaxWalkSpeed", controllerData.getDouble("maxSpeed"));
-                        else if (controllerData.has("maxWalkSpeed"))
-                            controller.addProperty("MaxWalkSpeed", controllerData.getDouble("maxWalkSpeed"));
-
-                        // Let's use MinJumpHeight if JumpHeight is provided
-                        if (controllerData.has("jumpHeight"))
-                            controller.addProperty("MinJumpHeight", controllerData.getDouble("jumpHeight"));
-
-                        // Gravity
-                        controller.addProperty("Gravity", 10.0);
-                        controller.addProperty("MaxFallSpeed", 15.0);
-                        break;
-
-                    case "Fly":
-                        // "MaxHorizontalSpeed": 20, "MaxClimbSpeed": 10
-                        if (controllerData.has("maxSpeed")) {
-                            controller.addProperty("MaxHorizontalSpeed", controllerData.getDouble("maxSpeed"));
-                            controller.addProperty("MaxClimbSpeed", controllerData.getDouble("maxSpeed") / 2.0); // Rough
-                                                                                                                 // estimate
-                        }
-                        // Default Fallbacks
-                        if (!controller.has("MaxHorizontalSpeed"))
-                            controller.addProperty("MaxHorizontalSpeed", 10.0);
-                        if (!controller.has("MaxClimbSpeed"))
-                            controller.addProperty("MaxClimbSpeed", 5.0);
-                        controller.addProperty("MaxSinkSpeed", 3.0);
-                        controller.addProperty("MinAirSpeed", 0.0); // Allow hovering by default
-                        break;
-
-                    case "Dive": // Swimming
-                        // "MaxSwimSpeed": 10, "MaxDiveSpeed": 8
-                        if (controllerData.has("maxSpeed")) {
-                            controller.addProperty("MaxSwimSpeed", controllerData.getDouble("maxSpeed"));
-                            controller.addProperty("MaxDiveSpeed", controllerData.getDouble("maxSpeed") * 0.8);
-                        }
-                        if (!controller.has("MaxSwimSpeed"))
-                            controller.addProperty("MaxSwimSpeed", 5.0);
-                        controller.addProperty("Gravity", 10.0);
-                        break;
-
-                    default:
-                        if (controllerData.has("maxSpeed"))
-                            controller.addProperty("MaxSpeed", controllerData.getDouble("maxSpeed"));
-                        break;
-                }
-
-                motionControllers.add(controller);
-            }
-        } else {
-            // Default fallback
-            JsonObject walkController = new JsonObject();
-            walkController.addProperty("Type", "Walk");
-            walkController.addProperty("MaxWalkSpeed", 5.0);
-            walkController.addProperty("Acceleration", 25.0);
-            walkController.addProperty("MaxRotationSpeed", 180.0);
-            walkController.addProperty("MinJumpHeight", 1.2);
-            motionControllers.add(walkController);
-        }
-
-        role.add("MotionControllerList", motionControllers);
-
-        // Instructions (Behaviors)
-        // Generate based on behavior presets array
-        String[] presets = npc.behaviorPresets != null ? npc.behaviorPresets : new String[] { "idle" };
-        com.google.gson.JsonArray instructions = generateBehaviorInstructions(presets, 2.0);
-        role.add("Instructions", instructions);
-
-        // Interaction Instruction - Only register Follow state if "follow" preset is
-        // present
-        boolean hasFollowPreset = java.util.Arrays.stream(presets)
-                .anyMatch(p -> "follow".equalsIgnoreCase(p));
-        if (hasFollowPreset) {
-            JsonObject interactionInstruction = new JsonObject();
-            JsonObject interactSensor = new JsonObject();
-            interactSensor.addProperty("Type", "Any"); // "Any" type takes no parameters
-            interactionInstruction.add("Sensor", interactSensor);
-
-            com.google.gson.JsonArray interactActions = new com.google.gson.JsonArray();
-            JsonObject setStateAction = new JsonObject();
-            setStateAction.addProperty("Type", "State");
-            setStateAction.addProperty("State", "Follow"); // Registers "Follow" as a valid state
-            interactActions.add(setStateAction);
-
-            interactionInstruction.add("Actions", interactActions);
-            role.add("InteractionInstruction", interactionInstruction);
-        }
-
-        return role;
+        // ================================================================
+        // Variant of Template_Intelligent — 使用引擎内置的 Combat 状态追击
+        // Generic 角色的 Player+Seek 已确认不工作（包括原版 Test_Separation_Seek）
+        // Template_Intelligent 的 Combat 状态自带 Target sensor + Seek
+        // ================================================================
+        // 强制使用 Variant + Template_Intelligent
+        npc.roleType = "Variant";
+        npc.reference = "Template_Intelligent";
+        return buildVariantRoleJson(npc);
     }
 
     /**
-     * Generate instruction sets (States implementation) based on behavior presets.
-     * Loops through each preset and generates appropriate instructions.
-     * 
-     * Available presets:
-     * - "idle" (mandatory): Static behavior with Observe head motion
-     * - "follow": Follow state with Seek body motion towards target
-     * - "wander": Wander behavior with random movement
-     * 
-     * @param presets        Array of behavior preset names
-     * @param followDistance Stop distance for follow behavior (default 2.0)
-     * @return JsonArray of instructions
+     * 根据行为预设生成指令集（状态实现）
+     * 遍历每个预设并生成对应的行为指令
+     *
+     * 可用预设：
+     * - "idle"（必须）：静止行为，头部使用Observe运动
+     * - "follow"：跟随状态，身体使用Seek运动朝向目标
+     * - "wander"：漫游行为，在圆形区域内随机移动
+     *
+     * @param presets        行为预设名称数组
+     * @param followDistance 跟随行为的停止距离（默认2.0格）
+     * @return 指令JSON数组
      */
     private com.google.gson.JsonArray generateBehaviorInstructions(String[] presets, double followDistance) {
         com.google.gson.JsonArray instructions = new com.google.gson.JsonArray();
 
-        // Ensure we have at least idle preset
+        // 确保至少包含idle预设
         if (presets == null || presets.length == 0) {
             presets = new String[] { "idle" };
         }
 
-        // Check which presets are present
+        // 检查各预设是否存在
         boolean hasIdlePreset = false;
         boolean hasFollowPreset = false;
         boolean hasWanderPreset = false;
@@ -1108,150 +876,56 @@ public class RoleGenerator {
             }
         }
 
-        // Ensure idle is always present
+        // 确保idle始终存在
         if (!hasIdlePreset) {
             hasIdlePreset = true;
         }
 
-        // Generate instructions for each preset (order matters - higher priority first)
+        // ============================================================
+        // Generic角色行为指令 — 完全匹配原版 Test_Separation_Seek 模式
+        // Generic角色不支持State sensor，所以不用State包裹
+        // 结构: Instructions > [ { Instructions > [ { Sensor:Player + BodyMotion:Seek } ] } ]
+        // ============================================================
 
-        // 1. Follow Behavior (Higher Priority)
-        // Only add if "follow" preset is present
         if (hasFollowPreset) {
-            JsonObject followInstruction = new JsonObject();
-            followInstruction.addProperty("Name", "FollowBehavior");
+            // 外层 instruction（无 sensor，始终激活）
+            JsonObject outerInstruction = new JsonObject();
 
-            JsonObject followSensor = new JsonObject();
-            // Use "And" sensor to combine State check with Target provision
-            followSensor.addProperty("Type", "And");
-            com.google.gson.JsonArray sensors = new com.google.gson.JsonArray();
+            // 内层 instruction: Player sensor + Seek body motion
+            com.google.gson.JsonArray innerInstructions = new com.google.gson.JsonArray();
+            JsonObject seekInstruction = new JsonObject();
 
-            // Target Sensor: Provides the required "LiveEntity" feature for "Seek" motion
-            JsonObject targetSensor = new JsonObject();
-            targetSensor.addProperty("Type", "Target");
-            sensors.add(targetSensor);
+            JsonObject playerSensor = new JsonObject();
+            playerSensor.addProperty("Type", "Player");
+            playerSensor.addProperty("Range", 80);
+            seekInstruction.add("Sensor", playerSensor);
 
-            // State Sensor: Checks we are in "Follow" state
-            JsonObject stateSensor = new JsonObject();
-            stateSensor.addProperty("Type", "State");
-            stateSensor.addProperty("State", "Follow");
-            sensors.add(stateSensor);
+            JsonObject seekBody = new JsonObject();
+            seekBody.addProperty("Type", "Seek");
+            seekBody.addProperty("AbortDistance", 80);
+            seekBody.addProperty("StopDistance", followDistance);
+            seekBody.addProperty("SlowDownDistance", 4.0);
+            seekInstruction.add("BodyMotion", seekBody);
 
-            followSensor.add("Sensors", sensors);
-            followInstruction.add("Sensor", followSensor);
+            JsonObject headMotion = new JsonObject();
+            headMotion.addProperty("Type", "Observe");
+            com.google.gson.JsonArray headAngle = new com.google.gson.JsonArray();
+            headAngle.add(-45.0);
+            headAngle.add(45.0);
+            headMotion.add("AngleRange", headAngle);
+            seekInstruction.add("HeadMotion", headMotion);
 
-            JsonObject followBody = new JsonObject();
-            followBody.addProperty("Type", "Seek");
-            followBody.addProperty("StopDistance", followDistance);
-            followBody.addProperty("SlowDownDistance", 4.0);
-            followBody.addProperty("AbortDistance", 80.0);
-            followInstruction.add("BodyMotion", followBody);
-
-            JsonObject followHead = new JsonObject();
-            followHead.addProperty("Type", "Observe");
-            com.google.gson.JsonArray followAngle = new com.google.gson.JsonArray();
-            followAngle.add(-45.0);
-            followAngle.add(45.0);
-            followHead.add("AngleRange", followAngle);
-            followInstruction.add("HeadMotion", followHead);
-
-            instructions.add(followInstruction);
-        }
-
-        // 2. Wander Behavior (Fallback)
-        if (hasWanderPreset) {
-            JsonObject wanderInstruction = new JsonObject();
-            wanderInstruction.addProperty("Name", "WanderBehavior");
-
-            // IMPORTANT: fallback sensor
-            JsonObject wanderSensor = new JsonObject();
-            wanderSensor.addProperty("Type", "Any");
-            wanderInstruction.add("Sensor", wanderSensor);
-
-            // BodyMotion
-            JsonObject outerSequence = new JsonObject();
-            outerSequence.addProperty("Type", "Sequence");
-
-            com.google.gson.JsonArray outerMotions = new com.google.gson.JsonArray();
-
-            JsonObject innerSequence = new JsonObject();
-            innerSequence.addProperty("Type", "Sequence");
-            innerSequence.addProperty("Looped", true);
-
-            com.google.gson.JsonArray innerMotions = new com.google.gson.JsonArray();
-
-            // Wander timer
-            JsonObject wanderTimer = new JsonObject();
-            wanderTimer.addProperty("Type", "Timer");
-            com.google.gson.JsonArray wanderTime = new com.google.gson.JsonArray();
-            wanderTime.add(2);
-            wanderTime.add(4);
-            wanderTimer.add("Time", wanderTime);
-
-            JsonObject wanderMotion = new JsonObject();
-            wanderMotion.addProperty("Type", "WanderInCircle");
-            wanderMotion.addProperty("Radius", 10);
-            wanderMotion.addProperty("MaxHeadingChange", 60);
-            wanderMotion.addProperty("RelativeSpeed", 0.3);
-            wanderMotion.addProperty("MinWalkTime", 1);
-            wanderMotion.addProperty("RelaxedMoveConstraints", false);
-
-            wanderTimer.add("Motion", wanderMotion);
-            innerMotions.add(wanderTimer);
-
-            // Idle timer
-            JsonObject idleTimer = new JsonObject();
-            idleTimer.addProperty("Type", "Timer");
-            com.google.gson.JsonArray idleTime = new com.google.gson.JsonArray();
-            idleTime.add(3);
-            idleTime.add(5);
-            idleTimer.add("Time", idleTime);
-
-            JsonObject nothingMotion = new JsonObject();
-            nothingMotion.addProperty("Type", "Nothing");
-            idleTimer.add("Motion", nothingMotion);
-            innerMotions.add(idleTimer);
-
-            innerSequence.add("Motions", innerMotions);
-            outerMotions.add(innerSequence);
-            outerSequence.add("Motions", outerMotions);
-
-            wanderInstruction.add("BodyMotion", outerSequence);
-
-            instructions.add(wanderInstruction);
-        }
-
-        // 3. Idle Behavior (Lowest Priority - fallback when no wander)
-        // Only add if wander is not present (wander already handles Idle state)
-        if (hasIdlePreset && !hasWanderPreset) {
-            JsonObject idleInstruction = new JsonObject();
-            idleInstruction.addProperty("Name", "IdleBehavior");
-
-            JsonObject idleSensor = new JsonObject();
-            idleSensor.addProperty("Type", "State");
-            idleSensor.addProperty("State", "Idle");
-            idleInstruction.add("Sensor", idleSensor);
-
-            JsonObject idleBody = new JsonObject();
-            idleBody.addProperty("Type", "Nothing");
-            idleInstruction.add("BodyMotion", idleBody);
-
-            JsonObject idleHead = new JsonObject();
-            idleHead.addProperty("Type", "Observe");
-            com.google.gson.JsonArray idleAngle = new com.google.gson.JsonArray();
-            idleAngle.add(-45.0);
-            idleAngle.add(45.0);
-            idleHead.add("AngleRange", idleAngle);
-            idleInstruction.add("HeadMotion", idleHead);
-
-            instructions.add(idleInstruction);
+            innerInstructions.add(seekInstruction);
+            outerInstruction.add("Instructions", innerInstructions);
+            instructions.add(outerInstruction);
         }
 
         return instructions;
     }
 
     /**
-     * Data class for NPC role configuration.
+     * NPC角色配置数据类
+     * 包含继承系统（新版）和直接字段（旧版兼容）两套属性
      */
     public static class NpcRoleData {
         public String externalId;
@@ -1349,8 +1023,8 @@ public class RoleGenerator {
         public org.json.JSONArray motionControllerList;
 
         /**
-         * Create from full NPC JSON object (including root properties like
-         * preventKnockback)
+         * 从完整的NPC JSON对象创建角色数据
+         * 包括处理根属性（如preventKnockback等覆盖项）
          */
         public static NpcRoleData fromNpcJson(org.json.JSONObject npcJson) {
             String externalId = npcJson.getString("externalId");
@@ -1369,7 +1043,8 @@ public class RoleGenerator {
         }
 
         /**
-         * Create from partial data (Legacy/Direct)
+         * 从部分数据创建角色数据（旧版/直接格式）
+         * 解析hytaleRole对象中的所有字段，支持新旧两套格式
          */
         public static NpcRoleData fromNpcData(String externalId, String name, org.json.JSONObject hytaleRole) {
             NpcRoleData data = new NpcRoleData();
@@ -1554,12 +1229,12 @@ public class RoleGenerator {
     }
 
     // ============================================================================
-    // HELPER METHODS
+    // 辅助方法
     // ============================================================================
 
     /**
-     * Add a value of any type to a JsonObject.
-     * Handles numbers, strings, booleans, and JSON arrays.
+     * 将任意类型的值添加到JsonObject中
+     * 支持数字、字符串、布尔值和JSON数组
      */
     private void addValueToJsonObject(JsonObject obj, String key, Object value) {
         if (value == null) {
@@ -1594,7 +1269,7 @@ public class RoleGenerator {
     }
 
     /**
-     * Extract a string value from a parameters object, with fallback.
+     * 从parameters对象中提取字符串值，未找到时返回fallback值
      */
     private String getParameterStringValue(org.json.JSONObject parameters, String key, String fallback) {
         if (parameters != null && parameters.has(key)) {
@@ -1610,7 +1285,7 @@ public class RoleGenerator {
     }
 
     /**
-     * Extract an integer value from a parameters object, with fallback.
+     * 从parameters对象中提取整数值，未找到时返回fallback值
      */
     private Integer getParameterIntValue(org.json.JSONObject parameters, String key, int fallback) {
         if (parameters != null && parameters.has(key)) {
@@ -1626,7 +1301,7 @@ public class RoleGenerator {
     }
 
     /**
-     * Extract a double value from a parameters object, with fallback.
+     * 从parameters对象中提取浮点数值，未找到时返回fallback值
      */
     private Double getParameterDoubleValue(org.json.JSONObject parameters, String key, double fallback) {
         if (parameters != null && parameters.has(key)) {
@@ -1642,9 +1317,9 @@ public class RoleGenerator {
     }
 
     /**
-     * Normalize attitude string from backend format to Hytale format.
-     * Backend uses: HOSTILE, NEUTRAL, FRIENDLY
-     * Hytale uses: Hostile, Neutral, Ignore (FRIENDLY maps to Ignore)
+     * 将后端态度字符串标准化为Hytale格式
+     * 后端使用：HOSTILE, NEUTRAL, FRIENDLY
+     * Hytale使用：Hostile, Neutral, Ignore（FRIENDLY映射为Ignore）
      */
     private String normalizeAttitude(String attitude) {
         if (attitude == null) {

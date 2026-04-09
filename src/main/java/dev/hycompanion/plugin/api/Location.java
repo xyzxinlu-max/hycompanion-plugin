@@ -1,12 +1,12 @@
 package dev.hycompanion.plugin.api;
 
 /**
- * Represents a 3D location in the game world
- * 
- * @param x     X coordinate
- * @param y     Y coordinate (height)
- * @param z     Z coordinate
- * @param world World/dimension name
+ * 表示游戏世界中的三维坐标位置
+ *
+ * @param x     X 坐标
+ * @param y     Y 坐标（高度）
+ * @param z     Z 坐标
+ * @param world 世界/维度名称
  */
 public record Location(
         double x,
@@ -14,21 +14,21 @@ public record Location(
         double z,
         String world) {
     /**
-     * Create location without world (uses default)
+     * 创建不指定世界的位置（使用默认世界 "world"）
      */
     public static Location of(double x, double y, double z) {
         return new Location(x, y, z, "world");
     }
 
     /**
-     * Create location with world
+     * 创建指定世界的位置
      */
     public static Location of(double x, double y, double z, String world) {
         return new Location(x, y, z, world);
     }
 
     /**
-     * Parse location from string format "x,y,z" or "x,y,z,world"
+     * 从字符串格式解析位置，支持 "x,y,z" 或 "x,y,z,world" 格式
      */
     public static Location parse(String str) {
         String[] parts = str.split(",");
@@ -45,7 +45,7 @@ public record Location(
     }
 
     /**
-     * Calculate distance to another location
+     * 计算到另一个位置的三维距离
      */
     public double distanceTo(Location other) {
         if (other == null)
@@ -59,7 +59,7 @@ public record Location(
     }
 
     /**
-     * Calculate 2D distance (ignoring Y)
+     * 计算到另一个位置的二维距离（忽略 Y 轴高度）
      */
     public double distanceTo2D(Location other) {
         if (other == null)
@@ -72,14 +72,14 @@ public record Location(
     }
 
     /**
-     * Add offset to location
+     * 在当前位置基础上添加偏移量，返回新位置
      */
     public Location add(double dx, double dy, double dz) {
         return new Location(x + dx, y + dy, z + dz, world);
     }
 
     /**
-     * Get block coordinates (floor)
+     * 获取方块坐标（向下取整）
      */
     public Location toBlockLocation() {
         return new Location(
@@ -90,7 +90,7 @@ public record Location(
     }
 
     /**
-     * Convert to string format "x,y,z"
+     * 转换为坐标字符串格式 "x,y,z"
      */
     public String toCoordString() {
         return String.format("%.1f,%.1f,%.1f", x, y, z);

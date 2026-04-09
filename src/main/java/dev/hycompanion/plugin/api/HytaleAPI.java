@@ -14,593 +14,577 @@ import dev.hycompanion.plugin.core.npc.NpcInstanceData;
 import dev.hycompanion.plugin.core.npc.NpcMoveResult;
 
 /**
- * Abstraction layer for Hytale Server API
- * 
- * This interface defines all interactions with the Hytale game server.
- * Implementations should be created once the actual Hytale Server API is
- * available.
- * 
- * Current implementation:
+ * Hytale 服务器 API 抽象层
+ *
+ * 该接口定义了与 Hytale 游戏服务器的所有交互操作。
+ * 当实际的 Hytale 服务器 API 可用时，应创建对应的实现类。
+ *
+ * 当前实现：
  * {@link dev.hycompanion.plugin.adapter.MockHytaleAdapter}
- * 
+ *
  * @author Hycompanion Team
  */
 public interface HytaleAPI {
 
-        // ========== Player Operations ==========
+        // ========== 玩家操作 ==========
 
         /**
-         * Get a player by their unique ID
-         * 
-         * @param playerId Player's unique identifier
-         * @return Player if online and found
+         * 根据唯一 ID 获取玩家
+         *
+         * @param playerId 玩家的唯一标识符
+         * @return 如果玩家在线且存在则返回该玩家
          */
         Optional<GamePlayer> getPlayer(String playerId);
 
         /**
-         * Get a player by their name
-         * 
-         * @param playerName Player's display name
-         * @return Player if online and found
+         * 根据名称获取玩家
+         *
+         * @param playerName 玩家的显示名称
+         * @return 如果玩家在线且存在则返回该玩家
          */
         Optional<GamePlayer> getPlayerByName(String playerName);
 
         /**
-         * Find nearest block by tag
+         * 根据标签查找最近的方块
          */
         CompletableFuture<Optional<Map<String, Object>>> findBlock(
                         UUID npcId, String tag, int radius);
 
         /**
-         * Find nearest entity by type
+         * 根据类型查找最近的实体
          */
         CompletableFuture<Optional<Map<String, Object>>> findEntity(
                         UUID npcId, String name, int radius);
 
         /**
-         * Scan surroundings and return all unique block types with nearest coordinates.
-         * Groups results by category, with each blockId having its nearest position.
-         * 
-         * @param npcId          NPC's instance ID (scan center)
-         * @param radius         Scan radius in blocks
-         * @param containersOnly if true, it only returns blocks that are containers
-         * @return Map containing current_position, radius, categories, blocks,
-         *         totalUniqueBlocks
+         * 扫描周围环境并返回所有唯一方块类型及其最近坐标。
+         * 按类别分组结果，每个方块 ID 包含其最近位置。
+         *
+         * @param npcId          NPC 实例 ID（扫描中心点）
+         * @param radius         扫描半径（以方块为单位）
+         * @param containersOnly 如果为 true，则仅返回容器类方块
+         * @return 包含 current_position、radius、categories、blocks、totalUniqueBlocks 的 Map
          */
         CompletableFuture<Optional<Map<String, Object>>> scanBlocks(
                         UUID npcId, int radius, boolean containersOnly);
 
         /**
-         * Scan surroundings and return all entities with their details.
-         * Excludes the scanning NPC itself.
-         * 
-         * @param npcId  NPC's instance ID (scan center and exclusion)
-         * @param radius Scan radius in blocks
-         * @return Map containing current_position, radius, entities array,
-         *         totalEntities
+         * 扫描周围环境并返回所有实体及其详细信息。
+         * 排除执行扫描的 NPC 自身。
+         *
+         * @param npcId  NPC 实例 ID（扫描中心点，同时被排除在结果外）
+         * @param radius 扫描半径（以方块为单位）
+         * @return 包含 current_position、radius、entities 数组、totalEntities 的 Map
          */
         CompletableFuture<Optional<Map<String, Object>>> scanEntities(
                         UUID npcId, int radius);
 
         /**
-         * Get list of online players
+         * 获取在线玩家列表
          */
         List<GamePlayer> getOnlinePlayers();
 
         /**
-         * Get all NPC instances
-         * 
-         * @return List of NPC instances
+         * 获取所有 NPC 实例
+         *
+         * @return NPC 实例集合
          */
         Set<NpcInstanceData> getNpcInstances();
 
         /**
-         * Get a specific NPC instance by its UUID
-         * 
-         * @param npcInstanceUuid NPC instance UUID
-         * @return NPC instance if found
+         * 根据 UUID 获取特定的 NPC 实例
+         *
+         * @param npcInstanceUuid NPC 实例的 UUID
+         * @return 如果存在则返回该 NPC 实例
          */
         NpcInstanceData getNpcInstance(UUID npcInstanceUuid);
 
         /**
-         * Send a message to a specific player
-         * 
-         * @param playerId Target player's ID
-         * @param message  Message content
+         * 向指定玩家发送消息
+         *
+         * @param playerId 目标玩家的 ID
+         * @param message  消息内容
          */
         void sendMessage(String playerId, String message);
 
         /**
-         * Send a formatted NPC message to a player
-         * 
-         * @param npcInstanceId NPC's instance ID
-         * @param playerId      Target player's ID
-         * @param message       Message content
+         * 向玩家发送格式化的 NPC 消息
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param playerId      目标玩家的 ID
+         * @param message       消息内容
          */
         void sendNpcMessage(UUID npcInstanceId, String playerId, String formattedMessage, String rawMessage);
 
         /**
-         * Broadcast a formatted NPC message to all specified players
-         * 
-         * @param npcInstanceId NPC's instance ID
-         * @param playerIds     List of target player IDs
-         * @param message       Message content
+         * 向所有指定玩家广播格式化的 NPC 消息
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param playerIds     目标玩家 ID 列表
+         * @param message       消息内容
          */
         void broadcastNpcMessage(UUID npcInstanceId, List<String> playerIds, String formattedMessage, String rawMessage);
 
         /**
-         * Send an error message to a player (displayed in orange)
-         * 
-         * @param playerId Target player's ID
-         * @param message  Error message content
+         * 向玩家发送错误消息（以橙色显示）
+         *
+         * @param playerId 目标玩家的 ID
+         * @param message  错误消息内容
          */
         void sendErrorMessage(String playerId, String message);
 
         /**
-         * Broadcast a debug message to all OP (operator) players on the server.
-         * This is used to show detailed error information only to server
-         * administrators.
-         * 
-         * @param message The debug message to display (will be shown in red)
+         * 向服务器上所有管理员（OP）玩家广播调试消息。
+         * 用于仅向服务器管理员显示详细的错误信息。
+         *
+         * @param message 要显示的调试消息（以红色显示）
          */
         void broadcastDebugMessageToOps(String message);
 
         /**
-         * Check if a player is an operator (OP).
-         * 
-         * @param playerId The player's ID
-         * @return true if the player is an operator
+         * 检查玩家是否为管理员（OP）。
+         *
+         * @param playerId 玩家的 ID
+         * @return 如果玩家是管理员则返回 true
          */
         boolean isPlayerOp(String playerId);
 
-        // ========== NPC Operations ==========
+        // ========== NPC 操作 ==========
 
         /**
-         * Spawn an NPC entity in the world
-         * 
-         * @param npcId    NPC's external ID
-         * @param name     Display name
-         * @param location Spawn location
-         * @return Created entity UUID
+         * 在游戏世界中生成一个 NPC 实体
+         *
+         * @param npcId    NPC 的外部 ID
+         * @param name     显示名称
+         * @param location 生成位置
+         * @return 创建的实体 UUID
          */
         Optional<UUID> spawnNpc(String npcId, String name, Location location);
 
         /**
-         * Remove an NPC entity from the world
-         * 
-         * @param npcInstanceId NPC's instance ID
-         * @return true if removed
+         * 从游戏世界中移除一个 NPC 实体
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @return 如果移除成功则返回 true
          */
         boolean removeNpc(UUID npcInstanceId);
 
         /**
-         * Update NPC capabilities (invincibility, knockback, etc) for existing
-         * instances
-         * 
-         * @param externalId NPC's external ID (Role ID)
-         * @param npcData    Updated NPC data containing capability flags
+         * 更新现有 NPC 实例的能力属性（无敌、击退等）
+         *
+         * @param externalId NPC 的外部 ID（角色 ID）
+         * @param npcData    包含能力标志的更新后 NPC 数据
          */
         void updateNpcCapabilities(String externalId, dev.hycompanion.plugin.core.npc.NpcData npcData);
 
         /**
-         * Trigger an animation on an NPC
-         * 
-         * The animation name should match a key from the model's AnimationSets
-         * (e.g., "Sit", "Sleep", "Howl", "Greet", "Wave", "Idle", etc.)
-         * Available animations vary per model and can be discovered via
-         * getAvailableAnimations().
-         * 
-         * @param npcInstanceId NPC's instance ID
-         * @param animationName Animation set name from the model definition
+         * 触发 NPC 的动画
+         *
+         * 动画名称应与模型的 AnimationSets 中的键匹配
+         * （例如 "Sit"、"Sleep"、"Howl"、"Greet"、"Wave"、"Idle" 等）
+         * 可用动画因模型而异，可通过 getAvailableAnimations() 查询。
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param animationName 模型定义中的动画集名称
          */
         void triggerNpcEmote(UUID npcInstanceId, String animationName);
 
         /**
-         * Move an NPC to a location
-         * 
-         * @param npcInstanceId NPC's instance ID
-         * @param location      Target location
-         * @return CompletableFuture with result containing success status and final
-         *         location if applicable
+         * 移动 NPC 到指定位置
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param location      目标位置
+         * @return 包含成功状态和最终位置的 CompletableFuture
          */
         CompletableFuture<NpcMoveResult> moveNpcTo(UUID npcInstanceId, Location location);
 
         /**
-         * Get an NPC's current location
-         * 
-         * @param npcInstanceId NPC's instance ID
-         * @return Current location or empty if not found
+         * 获取 NPC 的当前位置
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @return 当前位置，如果未找到则返回空
          */
         Optional<Location> getNpcInstanceLocation(UUID npcInstanceId);
 
         /**
-         * Rotate an NPC to face a target location, if the NPC is idle/static.
-         * Implementations should avoid rotating NPCs that are actively following.
+         * 旋转 NPC 使其面向目标位置（仅在 NPC 空闲/静止时）。
+         * 实现时应避免旋转正在跟随目标的 NPC。
          *
-         * @param npcInstanceId  NPC's instance ID
-         * @param targetLocation Location to face
+         * @param npcInstanceId  NPC 实例 ID
+         * @param targetLocation 要面向的位置
          */
         void rotateNpcInstanceToward(UUID npcInstanceId, Location targetLocation);
 
         /**
-         * Check if an NPC entity is still valid in the game world.
-         * This returns false if the NPC was removed by Hytale commands (e.g., /npc
-         * clean)
-         * or if the entity reference is no longer valid.
-         * 
-         * @param npcInstanceId NPC's instance ID
-         * @return true if the entity exists and is valid
+         * 检查 NPC 实体在游戏世界中是否仍然有效。
+         * 如果 NPC 被 Hytale 命令移除（例如 /npc clean）或实体引用不再有效，则返回 false。
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @return 如果实体存在且有效则返回 true
          */
         boolean isNpcInstanceEntityValid(UUID npcInstanceId);
 
         /**
-         * Discover and bind existing NPC entities in the world for a specific role.
-         * This is used after sync to find NPCs that were persisted by Hytale
-         * and bind them to the plugin's tracking system.
-         * 
-         * @param externalId NPC's external ID (Role ID)
-         * @return List of discovered Entity UUIDs
+         * 发现并绑定游戏世界中特定角色的现有 NPC 实体。
+         * 用于同步后查找由 Hytale 持久化的 NPC，并将其绑定到插件的追踪系统中。
+         *
+         * @param externalId NPC 的外部 ID（角色 ID）
+         * @return 发现的实体 UUID 列表
          */
         List<UUID> discoverExistingNpcInstances(String externalId);
 
         /**
-         * Register a listener to be notified when an NPC instance is removed or
-         * invalidated.
-         * This ensures the NpcManager can clean up its tracking maps.
-         * 
-         * @param listener Callback receiving the UUID of the removed entity
+         * 注册监听器，当 NPC 实例被移除或失效时收到通知。
+         * 确保 NpcManager 可以清理其追踪映射表。
+         *
+         * @param listener 接收被移除实体 UUID 的回调函数
          */
         void registerNpcRemovalListener(java.util.function.Consumer<UUID> listener);
 
-        // ========== Trade Operations ==========
+        // ========== 交易操作 ==========
 
         /**
-         * Open trade interface between NPC and player
-         * 
-         * @param npcInstanceId NPC's instance ID
-         * @param playerId      Target player's ID
+         * 打开 NPC 与玩家之间的交易界面
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param playerId      目标玩家的 ID
          */
         void openTradeInterface(UUID npcInstanceId, String playerId);
 
-        // ========== Quest Operations ==========
+        // ========== 任务操作 ==========
 
         /**
-         * Offer a quest to a player from an NPC
-         * 
-         * @param npcInstanceId Source NPC's instance ID
-         * @param playerId      Target player's ID
-         * @param questId       Quest identifier
-         * @param questName     Human-readable quest name (optional)
+         * 由 NPC 向玩家提供一个任务
+         *
+         * @param npcInstanceId 发起任务的 NPC 实例 ID
+         * @param playerId      目标玩家的 ID
+         * @param questId       任务标识符
+         * @param questName     可读的任务名称（可选）
          */
         void offerQuest(UUID npcInstanceId, String playerId, String questId, String questName);
 
-        // ========== World Context ==========
+        // ========== 世界上下文 ==========
 
         /**
-         * Get the current time of day
-         * 
-         * @return Time as string (dawn, morning, noon, afternoon, dusk, night)
+         * 获取当前时间段
+         *
+         * @return 时间字符串（dawn 黎明、morning 早晨、noon 正午、afternoon 下午、dusk 黄昏、night 夜晚）
          */
         String getTimeOfDay();
 
         /**
-         * Get the current weather
-         * 
-         * @return Weather as string (clear, rain, storm, snow)
+         * 获取当前天气
+         *
+         * @return 天气字符串（clear 晴天、rain 下雨、storm 暴风雨、snow 下雪）
          */
         String getWeather();
 
         /**
-         * Get players near a location
-         * 
-         * @param location Center location
-         * @param radius   Search radius in blocks
-         * @return List of nearby player names
+         * 获取某位置附近的玩家名称
+         *
+         * @param location 中心位置
+         * @param radius   搜索半径（以方块为单位）
+         * @return 附近玩家名称列表
          */
         List<String> getNearbyPlayerNames(Location location, double radius);
 
         /**
-         * Get players near a location as GamePlayer objects
-         * 
-         * @param location Center location
-         * @param radius   Search radius in blocks
-         * @return List of nearby players
+         * 获取某位置附近的玩家（返回 GamePlayer 对象）
+         *
+         * @param location 中心位置
+         * @param radius   搜索半径（以方块为单位）
+         * @return 附近玩家列表
          */
         List<GamePlayer> getNearbyPlayers(Location location, double radius);
 
         /**
-         * Get the world/dimension name
-         * 
-         * @return World name
+         * 获取世界/维度名称
+         *
+         * @return 世界名称
          */
         String getWorldName();
 
-        // ========== AI Action Operations ==========
+        // ========== AI 行为操作 ==========
 
         /**
-         * Makes an NPC start following a player.
-         * Uses the NPC's state machine to transition to a Following state.
-         * 
-         * @param npcInstanceId    The instance ID of the NPC
-         * @param targetPlayerName The username of the player to follow
-         * @return true if the NPC started following successfully
+         * 让 NPC 开始跟随玩家。
+         * 使用 NPC 的状态机转换到跟随状态。
+         *
+         * @param npcInstanceId    NPC 实例 ID
+         * @param targetPlayerName 要跟随的玩家用户名
+         * @return 如果 NPC 成功开始跟随则返回 true
          */
         boolean startFollowingPlayer(UUID npcInstanceId, String targetPlayerName);
 
         /**
-         * Makes an NPC stop following its current target and return to idle.
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @return true if the NPC stopped following successfully
+         * 让 NPC 停止跟随当前目标并返回空闲状态。
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @return 如果 NPC 成功停止跟随则返回 true
          */
         boolean stopFollowing(UUID npcInstanceId);
 
         /**
-         * Makes an NPC start attacking a target entity.
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @param targetName    The name of the target (player username or NPC name)
-         * @param attackType    The type of attack ("melee" or "ranged")
-         * @return true if the NPC started attacking successfully
+         * 让 NPC 开始攻击目标实体。
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param targetName    目标名称（玩家用户名或 NPC 名称）
+         * @param attackType    攻击类型（"melee" 近战 或 "ranged" 远程）
+         * @return 如果 NPC 成功开始攻击则返回 true
          */
         boolean startAttacking(UUID npcInstanceId, String targetName, String attackType);
 
         /**
-         * Makes an NPC stop attacking and return to peaceful state.
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @return true if the NPC stopped attacking successfully
+         * 让 NPC 停止攻击并返回和平状态。
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @return 如果 NPC 成功停止攻击则返回 true
          */
         boolean stopAttacking(UUID npcInstanceId);
 
         /**
-         * Checks if an NPC is currently busy (following a target or in combat).
-         * Used to determine if idle animations (emotes) should be played.
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @return true if the NPC is following or attacking, false if idle
+         * 检查 NPC 当前是否繁忙（正在跟随目标或战斗中）。
+         * 用于判断是否应播放空闲动画（表情）。
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @return 如果 NPC 正在跟随或攻击则返回 true，空闲则返回 false
          */
         boolean isNpcBusy(UUID npcInstanceId);
 
-        // ========== Animation Discovery ==========
+        // ========== 动画发现 ==========
 
         /**
-         * Gets all available animation IDs for an NPC based on its model.
-         * This is used for dynamic emote tool generation.
-         * 
-         * @param npcId The external ID of the NPC
-         * @return List of animation IDs available for this NPC's model
+         * 根据 NPC 的模型获取所有可用的动画 ID。
+         * 用于动态表情工具的生成。
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @return 该 NPC 模型可用的动画 ID 列表
          */
         List<String> getAvailableAnimations(UUID npcInstanceId);
 
-        // ========== Block Discovery ==========
+        // ========== 方块发现 ==========
 
         /**
-         * Gets all available block types on the server with enriched metadata.
-         * This is sent to the backend on startup to enable LLM block discovery.
-         * 
-         * The returned list includes block IDs, display names, material types
-         * (wood, stone, ore, etc.), and keywords for semantic matching.
-         * 
-         * @return List of BlockInfo objects describing available blocks
+         * 获取服务器上所有可用方块类型及其丰富的元数据。
+         * 在启动时发送给后端，以启用 LLM 方块发现功能。
+         *
+         * 返回列表包含方块 ID、显示名称、材质类型
+         * （木材、石头、矿石等）以及用于语义匹配的关键词。
+         *
+         * @return 描述可用方块的 BlockInfo 对象列表
          */
         List<dev.hycompanion.plugin.core.world.BlockInfo> getAvailableBlocks();
 
-        // ========== Thinking Indicator ==========
+        // ========== 思考指示器 ==========
 
         /**
-         * Shows a floating "Thinking..." text above an NPC's head with animated dots.
-         * The text cycles through "Thinking .", "Thinking ..", "Thinking ..." every
-         * 500ms.
-         * 
-         * @param npcInstanceId The instance ID of the NPC
+         * 在 NPC 头顶显示带有动画省略号的浮动"思考中..."文字。
+         * 文字每 500 毫秒循环显示 "Thinking ."、"Thinking .."、"Thinking ..."。
+         *
+         * @param npcInstanceId NPC 实例 ID
          */
         void showThinkingIndicator(UUID npcInstanceId);
 
         /**
-         * Hides the thinking indicator above an NPC's head.
-         * Should be called when the NPC receives a response.
-         * 
-         * @param npcInstanceId The instance ID of the NPC
+         * 隐藏 NPC 头顶的思考指示器。
+         * 应在 NPC 收到响应时调用。
+         *
+         * @param npcInstanceId NPC 实例 ID
          */
         void hideThinkingIndicator(UUID npcInstanceId);
 
         /**
-         * Remove any "Zombie" thinking indicators that may have persisted from a crash.
-         * These are entities with "Thinking..." nameplates that are not currently
-         * tracked.
-         * 
-         * @return Number of indicators removed
+         * 移除因崩溃而残留的"僵尸"思考指示器。
+         * 这些是带有 "Thinking..." 名称标签但当前未被追踪的实体。
+         *
+         * @return 移除的指示器数量
          */
         int removeZombieThinkingIndicators();
 
-        // ========== Teleport Operations ==========
+        // ========== 传送操作 ==========
 
         /**
-         * Teleport an NPC instance to a specific location.
-         * 
-         * @param npcInstanceId The instance ID of the NPC to teleport
-         * @param location      The target location
-         * @return true if teleport was successful
+         * 将 NPC 实例传送到指定位置。
+         *
+         * @param npcInstanceId 要传送的 NPC 实例 ID
+         * @param location      目标位置
+         * @return 如果传送成功则返回 true
          */
         boolean teleportNpcTo(UUID npcInstanceId, Location location);
 
         /**
-         * Teleport a player to a specific location.
-         * 
-         * @param playerId The ID of the player to teleport
-         * @param location The target location
-         * @return true if teleport was successful
+         * 将玩家传送到指定位置。
+         *
+         * @param playerId 要传送的玩家 ID
+         * @param location 目标位置
+         * @return 如果传送成功则返回 true
          */
         boolean teleportPlayerTo(String playerId, Location location);
 
         /**
-         * Cleanup resources and cancel pending tasks.
-         * Should be called when the plugin shuts down.
+         * 清理资源并取消待处理的任务。
+         * 应在插件关闭时调用。
          */
         default void cleanup() {
         }
 
-        // ========== Inventory Operations ==========
+        // ========== 背包操作 ==========
 
         /**
-         * Equip an item to the NPC (armor or weapon/tool)
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @param itemId        The item ID to equip
-         * @param slot          Target slot (auto, head, chest, hands, legs, hotbar_0,
-         *                      hotbar_1, hotbar_2)
-         * @return Result of the equip operation
+         * 为 NPC 装备物品（护甲或武器/工具）
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param itemId        要装备的物品 ID
+         * @param slot          目标槽位（auto 自动、head 头部、chest 胸部、hands 手部、legs 腿部、
+         *                      hotbar_0、hotbar_1、hotbar_2 快捷栏）
+         * @return 装备操作的结果
          */
         EquipResult equipItem(UUID npcInstanceId, String itemId, String slot);
 
         /**
-         * Break a block and return the drops
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @param targetBlock   The block location to break
-         * @param toolItemId    Optional tool to use (null for held item)
-         * @param maxAttempts   Maximum attempts before giving up
-         * @return Result of the break operation
+         * 破坏方块并返回掉落物
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param targetBlock   要破坏的方块位置
+         * @param toolItemId    可选的使用工具（null 则使用手持物品）
+         * @param maxAttempts   放弃前的最大尝试次数
+         * @return 破坏操作的结果
          */
         BreakResult breakBlock(UUID npcInstanceId, Location targetBlock, String toolItemId, int maxAttempts);
 
         /**
-         * Pick up dropped items near the NPC
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @param radius        Pickup radius in blocks
-         * @param itemId        Optional specific item ID to pick up (null for any)
-         * @param maxItems      Maximum items to pick up
-         * @return Result of the pickup operation
+         * 拾取 NPC 附近的掉落物品
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param radius        拾取半径（以方块为单位）
+         * @param itemId        可选的指定物品 ID（null 则拾取任意物品）
+         * @param maxItems      最大拾取数量
+         * @return 拾取操作的结果
          */
         PickupResult pickupItems(UUID npcInstanceId, double radius, String itemId, int maxItems);
 
         /**
-         * Use the currently held item multiple times
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @param target        Target location (block or entity)
-         * @param useCount      Number of times to use the item
-         * @param intervalMs    Interval between uses in milliseconds
-         * @param targetType    Type of target (block or entity)
-         * @return Result of the use operation
+         * 多次使用当前手持物品
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param target        目标位置（方块或实体）
+         * @param useCount      使用次数
+         * @param intervalMs    两次使用之间的间隔（毫秒）
+         * @param targetType    目标类型（方块或实体）
+         * @return 使用操作的结果
          */
         UseResult useHeldItem(UUID npcInstanceId, Location target, int useCount, long intervalMs,
                         TargetType targetType);
 
         /**
-         * Drop an item from inventory to the ground
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @param itemId        The item ID to drop
-         * @param quantity      Quantity to drop
-         * @param throwSpeed    Throw speed (0.5=gentle, 1.0=normal, 2.0=far)
-         * @return Result of the drop operation
+         * 将物品从背包丢弃到地面
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param itemId        要丢弃的物品 ID
+         * @param quantity      丢弃数量
+         * @param throwSpeed    投掷速度（0.5=轻抛、1.0=正常、2.0=远抛）
+         * @return 丢弃操作的结果
          */
         DropResult dropItem(UUID npcInstanceId, String itemId, int quantity, float throwSpeed);
 
         /**
-         * Get the NPC's current inventory contents
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @param includeEmpty  Whether to include empty slots in the response
-         * @return Snapshot of the inventory
+         * 获取 NPC 当前的背包内容
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param includeEmpty  是否在响应中包含空槽位
+         * @return 背包快照
          */
         InventorySnapshot getInventory(UUID npcInstanceId, boolean includeEmpty);
 
         /**
-         * Unequip an item from a specific slot
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @param slot          Slot to unequip
-         * @param destroy       If true, destroys the item instead of moving to storage
-         * @return Result of the unequip operation
+         * 从指定槽位卸下装备
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param slot          要卸下的槽位
+         * @param destroy       如果为 true，则销毁物品而非移至存储区
+         * @return 卸下装备操作的结果
          */
         UnequipResult unequipItem(UUID npcInstanceId, String slot, boolean destroy);
 
         /**
-         * Expand the NPC's inventory storage capacity
-         * 
-         * @param npcInstanceId The instance ID of the NPC
-         * @param storageSlots  Number of storage slots to add
-         * @return true if expansion was successful
+         * 扩展 NPC 的背包存储容量
+         *
+         * @param npcInstanceId NPC 实例 ID
+         * @param storageSlots  要添加的存储槽位数量
+         * @return 如果扩展成功则返回 true
          */
         boolean expandNpcInventory(UUID npcInstanceId, int storageSlots);
 
-        // ========== Container Operations ==========
+        // ========== 容器操作 ==========
 
         /**
-         * Get the inventory contents of a container block
-         * 
-         * @param npcInstanceId The instance ID of the NPC interacting with the
-         *                      container
-         * @param x             Target container X coordinate
-         * @param y             Target container Y coordinate
-         * @param z             Target container Z coordinate
-         * @return CompletableFuture with the container inventory result
+         * 获取容器方块的物品内容
+         *
+         * @param npcInstanceId 与容器交互的 NPC 实例 ID
+         * @param x             目标容器的 X 坐标
+         * @param y             目标容器的 Y 坐标
+         * @param z             目标容器的 Z 坐标
+         * @return 包含容器物品结果的 CompletableFuture
          */
         CompletableFuture<Optional<ContainerInventoryResult>> getContainerInventory(UUID npcInstanceId, int x, int y,
                         int z);
 
         /**
-         * Store an item from the NPC's inventory into a container block
-         * 
-         * @param npcInstanceId The instance ID of the NPC interacting with the
-         *                      container
-         * @param x             Target container X coordinate
-         * @param y             Target container Y coordinate
-         * @param z             Target container Z coordinate
-         * @param itemId        Item ID to store
-         * @param quantity      Quantity to store
-         * @return CompletableFuture with the transaction result
+         * 将物品从 NPC 背包存入容器方块
+         *
+         * @param npcInstanceId 与容器交互的 NPC 实例 ID
+         * @param x             目标容器的 X 坐标
+         * @param y             目标容器的 Y 坐标
+         * @param z             目标容器的 Z 坐标
+         * @param itemId        要存入的物品 ID
+         * @param quantity      要存入的数量
+         * @return 包含交易结果的 CompletableFuture
          */
         CompletableFuture<Optional<ContainerActionResult>> storeItemInContainer(UUID npcInstanceId, int x, int y, int z,
                         String itemId, int quantity);
 
         /**
-         * Take an item from a container block into the NPC's inventory
-         * 
-         * @param npcInstanceId The instance ID of the NPC interacting with the
-         *                      container
-         * @param x             Target container X coordinate
-         * @param y             Target container Y coordinate
-         * @param z             Target container Z coordinate
-         * @param itemId        Item ID to take
-         * @param quantity      Quantity to take
-         * @return CompletableFuture with the transaction result
+         * 从容器方块中取出物品到 NPC 背包
+         *
+         * @param npcInstanceId 与容器交互的 NPC 实例 ID
+         * @param x             目标容器的 X 坐标
+         * @param y             目标容器的 Y 坐标
+         * @param z             目标容器的 Z 坐标
+         * @param itemId        要取出的物品 ID
+         * @param quantity      要取出的数量
+         * @return 包含交易结果的 CompletableFuture
          */
         CompletableFuture<Optional<ContainerActionResult>> takeItemFromContainer(UUID npcInstanceId, int x, int y,
                         int z, String itemId, int quantity);
 
-        // ========== NPC Respawn Operations ==========
+        // ========== NPC 重生操作 ==========
 
         /**
-         * Schedule an NPC to respawn after a specified delay.
-         * The NPC will be spawned at its original spawn location with the same role and
-         * capabilities.
-         * 
-         * @param externalId   The external ID (role) of the NPC
-         * @param delaySeconds The delay in seconds before respawning
+         * 安排 NPC 在指定延迟后重生。
+         * NPC 将在原始生成位置以相同角色和能力重新生成。
+         *
+         * @param externalId   NPC 的外部 ID（角色）
+         * @param delaySeconds 重生前的延迟时间（秒）
          */
         default void scheduleNpcRespawn(String externalId, long delaySeconds) {
         }
 
         /**
-         * Cancel a pending NPC respawn task.
-         * This can be used to prevent an NPC from respawning if needed.
-         * 
-         * @param externalId The external ID (role) of the NPC whose respawn should be
-         *                   cancelled
+         * 取消待处理的 NPC 重生任务。
+         * 可用于在需要时阻止 NPC 重生。
+         *
+         * @param externalId 要取消重生的 NPC 外部 ID（角色）
          */
         default void cancelNpcRespawn(String externalId) {
         }
 
         /**
-         * Target type for useHeldItem operation
+         * useHeldItem 操作的目标类型枚举
          */
         enum TargetType {
+                /** 方块目标 */
                 BLOCK,
+                /** 实体目标 */
                 ENTITY
         }
 }
