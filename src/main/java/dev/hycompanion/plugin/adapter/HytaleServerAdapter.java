@@ -1459,8 +1459,8 @@ public class HytaleServerAdapter implements HytaleAPI {
                     if (chunk == null)
                         continue;
 
-                    // Scan Y range (NPC height +/- 10 blocks)
-                    for (int y = Math.max(0, startY - 10); y <= Math.min(255, startY + 10); y++) {
+                    // Scan Y range: surface only (NPC height -2 to +5, avoid underground)
+                    for (int y = Math.max(0, startY - 2); y <= Math.min(255, startY + 5); y++) {
                         int blockId = chunk.getBlock(x, y, z);
                         if (targetBlockIds.contains(blockId)) {
                             // Get the actual block type for the result
