@@ -1184,9 +1184,10 @@ public class HytaleServerAdapter implements HytaleAPI {
     public CompletableFuture<NpcMoveResult> moveNpcTo(UUID npcInstanceId,
             Location location) {
         CompletableFuture<NpcMoveResult> result = new CompletableFuture<>();
-        logger.info("[Hycompanion] NPC [" + npcInstanceId + "] moving to " + location);
+        logger.info("[Hycompanion] NPC [" + npcInstanceId + "] teleporting to " + location);
 
-        // Cancel previous tasks
+        // Cancel any existing follow/movement tasks
+        cancelFollowTask(npcInstanceId);
         cleanupMovement(npcInstanceId);
 
         NpcInstanceData npcInstanceData = npcInstanceEntities.get(npcInstanceId);
@@ -1197,264 +1198,55 @@ public class HytaleServerAdapter implements HytaleAPI {
         }
 
         Ref<EntityStore> entityRef = npcInstanceData.entityRef();
-        if (entityRef != null && entityRef.isValid()) {
-            try {
-                Store<EntityStore> store = entityRef.getStore();
-
-                // Get the correct world for this NPC, not the default world
-                String worldName = npcInstanceData.spawnLocation() != null ? npcInstanceData.spawnLocation().world()
-                        : null;
-                World resolvedWorld = worldName != null ? Universe.get().getWorld(worldName) : null;
-                if (resolvedWorld == null) {
-                    resolvedWorld = Universe.get().getDefaultWorld();
-                    logger.warn("[Hycompanion] moveNpcTo: Could not find world '" + worldName
-                            + "' for NPC, falling back to default world");
-                }
-
-                if (resolvedWorld != null) {
-                    final World world = resolvedWorld;
-                    world.execute(() -> {
-                        try {
-                            // 1. Spawn invisible target entity (Projectile with NetworkId + BoundingBox)
-                            Holder<EntityStore> holder = EntityStore.REGISTRY.newHolder();
-
-                            ProjectileComponent projectile = new ProjectileComponent("Projectile");
-                            holder.putComponent(ProjectileComponent.getComponentType(), projectile);
-
-                            Vector3d pos = new Vector3d(location.x(), location.y(), location.z());
-                            holder.putComponent(TransformComponent.getComponentType(),
-                                    new TransformComponent(pos, new Vector3f(0, 0, 0)));
-
-                            holder.ensureComponent(UUIDComponent.getComponentType());
-
-                            // Keep it intangible so NPC doesn't collide
-                            holder.ensureComponent(Intangible.getComponentType());
-
-                            // Add NetworkId so it registers in spatial systems and client
-                            // (Invisible but valid for AI)
-                            holder.addComponent(NetworkId.getComponentType(),
-                                    new NetworkId(
-                                            world.getEntityStore().getStore().getExternalData().takeNextNetworkId()));
-
-                            // Basic initialization
-                            projectile.initialize();
-
-                            Ref<EntityStore> targetRef = world.getEntityStore().getStore().addEntity(holder,
-                                    AddReason.SPAWN);
-
-                            if (targetRef != null && targetRef.isValid()) {
-                                movementTargetEntities.put(npcInstanceId, targetRef);
-
-                                NPCEntity npcEntity = store.getComponent(entityRef, NPCEntity.getComponentType());
-                                if (npcEntity != null) {
-                                    var role = npcEntity.getRole();
-                                    if (role != null) {
-                                        // 2. Reset animations/posture and clear any existing follow target/state.
-                                        npcInstanceData.resetAnimationsAndPosture(store, "moveNpcTo");
-                                        try {
-                                            role.getMarkedEntitySupport().setMarkedEntity("LockedTarget", null);
-                                            role.getStateSupport().setState(entityRef, "Idle", null, store);
-                                        } catch (Exception e) {
-                                            try {
-                                                role.getStateSupport().setState(entityRef, "Idle", null, store);
-                                            } catch (Exception ignored) {
-                                            }
-                                        }
-                                        busyNpcs.remove(npcInstanceId);
-
-                                        // 3. Set LockedTarget to our invisible entity
-                                        role.getMarkedEntitySupport().setMarkedEntity("LockedTarget", targetRef);
-
-                                        // 4. Set state to Follow
-                                        try {
-                                            role.getStateSupport().setState(entityRef, "Follow", null, store);
-                                        } catch (Exception e) {
-                                            role.getStateSupport().setState(entityRef, "Follow", "Default", store);
-                                        }
-                                        busyNpcs.add(npcInstanceId);
-                                        logger.info("[Hycompanion] NPC started following target marker to " + location);
-                                    }
-                                }
-                            } else {
-                                logger.error("Failed to spawn movement target entity");
-                                result.complete(NpcMoveResult.failed("spawn_failed"));
-                            }
-                        } catch (Exception e) {
-                            logger.error("Error setting up move: " + e.getMessage());
-                            Sentry.captureException(e);
-                            result.complete(NpcMoveResult.failed("error: " + e.getMessage()));
-                        }
-                    });
-
-                    // Start monitoring
-                    AtomicInteger ticks = new AtomicInteger(0);
-                    // Track position for stuck detection: [x, y, z, timestamp_ms]
-                    AtomicReference<double[]> lastPosition = new AtomicReference<>(new double[] { 0, 0, 0, 0 });
-                    // Stuck detection: 10 seconds without significant movement
-                    final long STUCK_TIMEOUT_MS = 10000;
-                    final double STUCK_DISTANCE_THRESHOLD = 0.5; // 0.5 blocks = 50cm
-                    // Absolute maximum timeout: 5 minutes (for very long distances)
-                    final int MAX_TICKS = 5 * 60 * 4; // 5 min * 60 sec * 4 ticks/sec (250ms interval)
-
-                    ScheduledFuture<?> task = rotationScheduler.scheduleAtFixedRate(() -> {
-                        // [Shutdown Fix] Check shutdown flag first
-                        if (isShuttingDown() || Thread.currentThread().isInterrupted()) {
-                            result.complete(NpcMoveResult.failed("shutdown"));
-                            cleanupMovement(npcInstanceId);
-                            return;
-                        }
-
-                        // Check if already done (completed by another execution)
-                        if (result.isDone()) {
-                            cleanupMovement(npcInstanceId);
-                            return;
-                        }
-
-                        // Increment tick counter
-                        int currentTick = ticks.incrementAndGet();
-
-                        // Absolute maximum timeout (5 minutes) as safety net
-                        if (currentTick > MAX_TICKS) {
-                            logger.info(
-                                    "[Hycompanion] Move absolute timeout after " + currentTick + " checks (~5 min)");
-
-                            safeWorldExecute(world, () -> {
-                                if (result.isDone())
-                                    return;
-                                try {
-                                    Location finalLoc = null;
-                                    if (entityRef.isValid()) {
-                                        TransformComponent t = store.getComponent(entityRef,
-                                                TransformComponent.getComponentType());
-                                        if (t != null) {
-                                            Vector3d p = t.getPosition();
-                                            finalLoc = Location.of(p.getX(), p.getY(), p.getZ(), "world");
-                                        }
-                                    }
-                                    result.complete(NpcMoveResult.timeout(finalLoc));
-                                    cleanupMovementAndResetState(npcInstanceId, entityRef, store);
-                                } catch (Exception e) {
-                                    Sentry.captureException(e);
-                                    result.complete(NpcMoveResult.timeout(null));
-                                    cleanupMovement(npcInstanceId);
-                                }
-                            });
-                            return;
-                        }
-
-                        // Check arrival and stuck detection on world thread
-                        safeWorldExecute(world, () -> {
-                            // Double-check completion status inside world thread
-                            if (result.isDone()) {
-                                return;
-                            }
-                            try {
-                                if (!entityRef.isValid()) {
-                                    result.complete(NpcMoveResult.failed("entity_lost"));
-                                    cleanupMovement(npcInstanceId);
-                                    return;
-                                }
-                                TransformComponent t = store.getComponent(entityRef,
-                                        TransformComponent.getComponentType());
-                                if (t == null) {
-                                    return;
-                                }
-
-                                Vector3d currentPos = t.getPosition();
-                                double currentX = currentPos.getX();
-                                double currentY = currentPos.getY();
-                                double currentZ = currentPos.getZ();
-
-                                // Calculate distance to target
-                                double dx = currentX - location.x();
-                                double dy = currentY - location.y();
-                                double dz = currentZ - location.z();
-                                double distSq = dx * dx + dy * dy + dz * dz;
-
-                                // Check arrival
-                                double distance = Math.sqrt(distSq);
-
-                                // Threshold: 1.5 blocks actual distance
-                                if (distSq <= 2.25) {
-                                    logger.info("[Hycompanion] NPC arrived at destination, distance=" +
-                                            String.format("%.2f", distance) + " blocks");
-                                    Location finalLoc = Location.of(currentX, currentY, currentZ, "world");
-                                    result.complete(NpcMoveResult.success(finalLoc));
-                                    cleanupMovementAndResetState(npcInstanceId, entityRef, store);
-                                    return;
-                                }
-
-                                // Stuck detection: check if NPC hasn't moved significantly
-                                double[] lastPos = lastPosition.get();
-                                long now = System.currentTimeMillis();
-
-                                if (lastPos[3] == 0) {
-                                    // First position recording
-                                    lastPosition.set(new double[] { currentX, currentY, currentZ, (double) now });
-                                } else {
-                                    double moveDx = currentX - lastPos[0];
-                                    double moveDy = currentY - lastPos[1];
-                                    double moveDz = currentZ - lastPos[2];
-                                    double movedDist = Math.sqrt(moveDx * moveDx + moveDy * moveDy + moveDz * moveDz);
-
-                                    if (movedDist > STUCK_DISTANCE_THRESHOLD) {
-                                        // NPC moved significantly, update last position
-                                        lastPosition.set(new double[] { currentX, currentY, currentZ, (double) now });
-                                    } else {
-                                        // NPC hasn't moved much, check if stuck for 3+ seconds
-                                        long timeSinceLastMove = now - (long) lastPos[3];
-                                        if (timeSinceLastMove > STUCK_TIMEOUT_MS) {
-                                            // Extra arrival check: If it's less than 5 blocks, consider it arrived.
-                                            // The Hytale AI pathfinding often struggles perfectly centering large
-                                            // models.
-                                            if (distSq <= 25.0) {
-                                                logger.info(
-                                                        "[Hycompanion] NPC practically arrived, stuck within 5 blocks. distance="
-                                                                +
-                                                                String.format("%.2f", distance) + " blocks");
-                                                Location finalLoc = Location.of(currentX, currentY, currentZ, "world");
-                                                result.complete(NpcMoveResult.success(finalLoc));
-                                                cleanupMovementAndResetState(npcInstanceId, entityRef, store);
-                                                return;
-                                            }
-
-                                            logger.info(
-                                                    "[Hycompanion] NPC stuck detected! No significant movement for " +
-                                                            (timeSinceLastMove / 1000) + "s, distance=" +
-                                                            String.format("%.2f", distance) + " blocks from target");
-
-                                            Location finalLoc = Location.of(currentX, currentY, currentZ, "world");
-                                            result.complete(NpcMoveResult.timeout(finalLoc));
-                                            cleanupMovementAndResetState(npcInstanceId, entityRef, store);
-                                            return;
-                                        }
-                                    }
-                                }
-
-                                // Progress logging every 5 seconds (20 ticks * 250ms)
-                                if (currentTick % 10 == 0) {
-                                    logger.debug("[Hycompanion] NPC moving... distance=" +
-                                            String.format("%.2f", distance) + " blocks to target");
-                                }
-                            } catch (Exception e) {
-                                logger.debug("[Hycompanion] Error checking NPC position: " + e.getMessage());
-                                Sentry.captureException(e);
-                            }
-                        });
-
-                    }, 250, 250, TimeUnit.MILLISECONDS);
-                    movementTasks.put(npcInstanceId, task);
-
-                } else {
-                    result.complete(NpcMoveResult.failed("no_world"));
-                }
-            } catch (Exception e) {
-                logger.error("Could not move NPC: " + e.getMessage());
-                Sentry.captureException(e);
-                result.complete(NpcMoveResult.failed("error: " + e.getMessage()));
-            }
-        } else {
+        if (entityRef == null || !entityRef.isValid()) {
             result.complete(NpcMoveResult.failed("entity_ref_invalid"));
+            return result;
+        }
+
+        try {
+            String worldName = npcInstanceData.spawnLocation() != null ? npcInstanceData.spawnLocation().world() : null;
+            World resolvedWorld = worldName != null ? Universe.get().getWorld(worldName) : null;
+            if (resolvedWorld == null) {
+                resolvedWorld = Universe.get().getDefaultWorld();
+            }
+
+            if (resolvedWorld == null) {
+                result.complete(NpcMoveResult.failed("no_world"));
+                return result;
+            }
+
+            final World world = resolvedWorld;
+            world.execute(() -> {
+                try {
+                    Store<EntityStore> store = entityRef.getStore();
+
+                    // 获取NPC当前Y高度，防止传送到地下
+                    double safeY = location.y();
+                    TransformComponent currentTransform = store.getComponent(entityRef, TransformComponent.getComponentType());
+                    if (currentTransform != null) {
+                        double currentY = currentTransform.getPosition().getY();
+                        // 使用较高的Y值，防止卡进地里
+                        safeY = Math.max(safeY, currentY);
+                    }
+
+                    Vector3d teleportPos = new Vector3d(location.x(), safeY, location.z());
+                    Vector3f rotation = new Vector3f(0, 0, 0);
+                    Teleport teleport = new Teleport(world, teleportPos, rotation);
+                    store.addComponent(entityRef, Teleport.getComponentType(), teleport);
+
+                    Location finalLoc = Location.of(location.x(), safeY, location.z(), "world");
+                    result.complete(NpcMoveResult.success(finalLoc));
+                    logger.info("[Hycompanion] NPC teleported to x=" + location.x() + " y=" + safeY + " z=" + location.z());
+                } catch (Exception e) {
+                    logger.error("Error teleporting NPC: " + e.getMessage());
+                    Sentry.captureException(e);
+                    result.complete(NpcMoveResult.failed("error: " + e.getMessage()));
+                }
+            });
+        } catch (Exception e) {
+            logger.error("Could not move NPC: " + e.getMessage());
+            Sentry.captureException(e);
+            result.complete(NpcMoveResult.failed("error: " + e.getMessage()));
         }
 
         return result;

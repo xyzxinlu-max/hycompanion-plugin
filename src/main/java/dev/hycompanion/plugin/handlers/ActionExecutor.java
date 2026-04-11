@@ -135,7 +135,7 @@ public class ActionExecutor {
                 }
                 // === 移动与跟随动作 ===
                 case "move_to" -> {                      // 移动 NPC 到指定位置
-                    executeMoveTo(npcInstanceData, params, ack);
+                    executeMoveTo(npcInstanceData, playerId, params, ack);
                 }
                 case "follow_target" -> {                // 跟随目标玩家
                     executeFollowTarget(npcInstanceData, params);
@@ -531,13 +531,17 @@ public class ActionExecutor {
      * 移动至 - 将 NPC 移动到指定坐标位置
      * 异步执行，通过 ack 回调返回移动结果（成功/卡住/中断）
      */
-    private void executeMoveTo(NpcInstanceData npcInstanceData, JSONObject params, io.socket.client.Ack ack) {
+    private void executeMoveTo(NpcInstanceData npcInstanceData, String playerId, JSONObject params, io.socket.client.Ack ack) {
         if (npcInstanceData == null) {
             if (ack != null)
                 ack.call("{\"error\": \"NPC data missing\"}");
             return;
         }
         UUID npcInstanceId = npcInstanceData.entityUuid();
+
+        // 移动前先取消跟随
+        hytaleAPI.stopFollowing(npcInstanceId);
+
         if (params == null) {
             logger.warn("Move_to action without params for NPC: " + npcInstanceId);
             if (ack != null)
@@ -549,39 +553,22 @@ public class ActionExecutor {
         double y = params.optDouble("y", 0);
         double z = params.optDouble("z", 0);
 
+        // NPC单独传送，不带玩家
         Location destination = Location.of(x, y, z);
+        hytaleAPI.moveNpcTo(npcInstanceId, destination);
 
-        hytaleAPI.moveNpcTo(npcInstanceId, destination).thenAccept(result -> {
-            if (ack != null) {
-                org.json.JSONObject response = new org.json.JSONObject();
-
-                // 将移动结果状态映射为后端期望的响应格式
-                String status = result.status();
-                if ("success".equals(status)) {
-                    response.put("success", true);
-                } else if ("timeout".equals(status)) {
-                    response.put("stuck", true);
-                    response.put("reason", "Path blocked or movement timed out");
-                } else if ("shutdown".equals(status)) {
-                    response.put("interrupted", true);
-                } else {
-                    // Any other failure status
-                    response.put("stuck", true);
-                    response.put("reason", status);
-                }
-
-                if (result.finalLocation() != null) {
-                    response.put("x", result.finalLocation().x());
-                    response.put("y", result.finalLocation().y());
-                    response.put("z", result.finalLocation().z());
-                }
-
-                ack.call(response);
-            }
-        });
+        // 立刻返回ack
+        if (ack != null) {
+            org.json.JSONObject response = new org.json.JSONObject();
+            response.put("success", true);
+            response.put("x", x);
+            response.put("y", y);
+            response.put("z", z);
+            ack.call(response);
+        }
 
         if (config.logging().logActions()) {
-            logger.info("[NPC:" + npcInstanceId + "] moving to " + destination.toCoordString());
+            logger.info("[NPC:" + npcInstanceId + "] teleporting to x=" + x + " y=" + y + " z=" + z + " (with player)");
         }
     }
 
